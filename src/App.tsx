@@ -93,6 +93,7 @@ export default function App() {
     getAccessToken()
   );
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [authError, setAuthError] = useState('');
 
   // 5-Minute Google Sheets Auto-Sync state
   const [autoSyncStatus, setAutoSyncStatus] = useState<
@@ -275,12 +276,34 @@ export default function App() {
 
   const handleLogin = async () => {
     setIsLoggingIn(true);
+    setAuthError('');
     try {
       const res = await googleSignIn();
       setUser(res.user);
       setAccessToken(res.accessToken);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Google Sign-In failed:', err);
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: string }).code)
+          : '';
+      if (code === 'auth/unauthorized-domain') {
+        setAuthError(
+          `โดเมน ${window.location.hostname} ยังไม่ได้รับอนุญาตให้เข้าสู่ระบบ Google (auth/unauthorized-domain) — กรุณาเพิ่มโดเมนนี้ใน Firebase Authentication > Settings > Authorized domains หรือใช้งานผ่านลิงก์หลักของแอป`
+        );
+      } else if (code === 'auth/popup-blocked') {
+        setAuthError(
+          'เบราว์เซอร์บล็อกหน้าต่างเข้าสู่ระบบ (Pop-up) กรุณาอนุญาต Pop-up สำหรับเว็บไซต์นี้แล้วกดลองใหม่อีกครั้ง'
+        );
+      } else if (code === 'auth/popup-closed-by-user') {
+        setAuthError('ปิดหน้าต่างเข้าสู่ระบบ Google ก่อนดำเนินการเสร็จสิ้น');
+      } else {
+        setAuthError(
+          err instanceof Error
+            ? err.message
+            : 'ไม่สามารถเข้าสู่ระบบ Google ได้ กรุณาลองใหม่อีกครั้ง'
+        );
+      }
     } finally {
       setIsLoggingIn(false);
     }
@@ -290,6 +313,7 @@ export default function App() {
     await logout();
     setUser(null);
     setAccessToken(null);
+    setAuthError('');
   };
 
   const handleUpdateBackupSync = (patch: Partial<BackupSyncSettings>) => {
@@ -599,6 +623,7 @@ export default function App() {
               user={user}
               accessToken={accessToken}
               isLoggingIn={isLoggingIn}
+              authError={authError}
               onLogin={handleLogin}
               onLogout={handleLogout}
               settings={settings}

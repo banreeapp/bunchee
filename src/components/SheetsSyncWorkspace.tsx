@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
 import {
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   Download,
   ExternalLink,
   FilePlus2,
@@ -11,6 +13,7 @@ import {
   LogOut,
   Power,
   RefreshCw,
+  Unlink,
   UploadCloud,
 } from 'lucide-react';
 import { FISCAL_MONTHS } from '../data/pcuCatalog';
@@ -39,6 +42,7 @@ interface SheetsSyncWorkspaceProps {
   user: User | null;
   accessToken: string | null;
   isLoggingIn: boolean;
+  authError: string;
   onLogin: () => void;
   onLogout: () => void;
   settings: PcuSettings;
@@ -57,6 +61,7 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
   user,
   accessToken,
   isLoggingIn,
+  authError,
   onLogin,
   onLogout,
   settings,
@@ -74,6 +79,7 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
     `บัญชีการเงิน_${settings.unitName}_ปีงบ${settings.fiscalYearBE}`
   );
   const [linkInput, setLinkInput] = useState(settings.linkedSpreadsheetId || '');
+  const [copiedId, setCopiedId] = useState(false);
   const [appSheets, setAppSheets] = useState<SpreadsheetSummary[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [tabNames, setTabNames] = useState<string[]>([]);
@@ -93,6 +99,10 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
   const sheetsEnabled = backupSync.sheetsConnectionEnabled;
   const totalTabCount = Object.keys(PCU_SHEET_TABS).length;
 
+  useEffect(() => {
+    setLinkInput(settings.linkedSpreadsheetId || '');
+  }, [settings.linkedSpreadsheetId]);
+
   const loadFilesAndMeta = async (token: string, currentSheetId: string) => {
     setLoadingList(true);
     try {
@@ -101,6 +111,12 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
       if (currentSheetId) {
         const meta = await getSpreadsheetMetadata(token, currentSheetId);
         setTabNames(meta.sheets.map((s) => s.properties.title));
+        if (meta.properties.title && meta.properties.title !== settings.linkedSpreadsheetTitle) {
+          onUpdateSettings({
+            ...settings,
+            linkedSpreadsheetTitle: meta.properties.title,
+          });
+        }
       }
     } catch (err: unknown) {
       console.error(err);
@@ -150,16 +166,30 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
     }
   };
 
-  const handleConnectExisting = async (rawIdOrUrl: string) => {
-    if (!accessToken) return;
+  const handleBindSpreadsheetId = async (rawIdOrUrl: string) => {
     const spreadsheetId = extractSpreadsheetIdFromInput(rawIdOrUrl);
     if (!spreadsheetId) {
-      setErrorMessage('กรุณาระบุ URL หรือ Spreadsheet ID');
+      setErrorMessage('กรุณาระบุ URL ของ Google Sheets หรือ Spreadsheet ID');
       return;
     }
-    setBusy(true);
     setErrorMessage('');
     setStatusMessage('');
+
+    // If not signed in yet, save the Spreadsheet ID locally so it is pre-bound when signing in
+    if (!accessToken) {
+      onUpdateSettings({
+        ...settings,
+        linkedSpreadsheetId: spreadsheetId,
+        linkedSpreadsheetTitle: '',
+      });
+      setLinkInput(spreadsheetId);
+      setStatusMessage(
+        `ผูก Spreadsheet ID "${spreadsheetId}" เรียบร้อยแล้ว — กด Sign in with Google เพื่อตรวจสอบไฟล์และเริ่มซิงก์ข้อมูล`
+      );
+      return;
+    }
+
+    setBusy(true);
     try {
       const meta = await getSpreadsheetMetadata(accessToken, spreadsheetId);
       onUpdateSettings({
@@ -169,7 +199,7 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
       });
       setLinkInput(meta.spreadsheetId);
       setTabNames(meta.sheets.map((s) => s.properties.title));
-      setStatusMessage(`เชื่อมต่อไฟล์ "${meta.properties.title}" สำเร็จ`);
+      setStatusMessage(`ผูกและเชื่อมต่อไฟล์ "${meta.properties.title}" สำเร็จ`);
     } catch (err: unknown) {
       setErrorMessage(
         err instanceof Error
@@ -178,6 +208,29 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
       );
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleUnbindSpreadsheet = () => {
+    onUpdateSettings({
+      ...settings,
+      linkedSpreadsheetId: '',
+      linkedSpreadsheetTitle: '',
+    });
+    setLinkInput('');
+    setTabNames([]);
+    setErrorMessage('');
+    setStatusMessage('ยกเลิกการผูก Spreadsheet ID แล้ว');
+  };
+
+  const handleCopyId = async () => {
+    if (!settings.linkedSpreadsheetId) return;
+    try {
+      await navigator.clipboard.writeText(settings.linkedSpreadsheetId);
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 2000);
+    } catch {
+      // Ignore clipboard failure
     }
   };
 
@@ -463,16 +516,107 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
               </div>
             )}
 
-            {errorMessage && (
+            {(errorMessage || authError) && (
               <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-700">
-                {errorMessage}
+                {errorMessage || authError}
+              </div>
+            )}
+          </section>
+
+          {/* Always-visible Spreadsheet ID Binding Card (works before and after Google Sign-In) */}
+          <section className="rounded-xl border border-slate-200 bg-white p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  ผูก Spreadsheet ID ปลายทาง (วาง URL หรือ Spreadsheet ID ของ Google Sheets)
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  สามารถผูกหรือเปลี่ยน Spreadsheet ID ไว้ล่วงหน้าได้ทันที ตัวอย่าง URL:{' '}
+                  <span className="font-mono-num text-slate-600">
+                    https://docs.google.com/spreadsheets/d/
+                    <strong className="text-teal-700">SPREADSHEET_ID</strong>/edit
+                  </span>
+                </p>
+              </div>
+              {settings.linkedSpreadsheetId && (
+                <button
+                  type="button"
+                  onClick={handleUnbindSpreadsheet}
+                  className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-red-50 hover:text-red-700"
+                >
+                  <Unlink className="h-3.5 w-3.5" />
+                  <span>ยกเลิกการผูก ID</span>
+                </button>
+              )}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <input
+                type="text"
+                value={linkInput}
+                onChange={(e) => setLinkInput(e.target.value)}
+                placeholder="วาง URL ของ Google Sheets หรือ Spreadsheet ID เช่น 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+                className="font-mono-num min-w-[260px] flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:border-teal-600 focus:outline-none"
+              />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => handleBindSpreadsheetId(linkInput)}
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-50"
+              >
+                <Link2 className="h-3.5 w-3.5" />
+                <span>ผูก Spreadsheet ID</span>
+              </button>
+            </div>
+
+            {settings.linkedSpreadsheetId && (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs">
+                <div className="min-w-0 space-y-0.5">
+                  <p className="font-semibold text-slate-900">
+                    {settings.linkedSpreadsheetTitle ||
+                      (accessToken
+                        ? 'กำลังตรวจสอบชื่อไฟล์...'
+                        : 'ผูก Spreadsheet ID แล้ว (กด Sign in with Google ด้านบนเพื่อเชื่อมซิงก์)')}
+                  </p>
+                  <p className="font-mono-num break-all text-slate-600">
+                    Spreadsheet ID: {settings.linkedSpreadsheetId}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyId}
+                    className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                  >
+                    {copiedId ? (
+                      <>
+                        <Check className="h-3.5 w-3.5 text-teal-700" />
+                        <span>คัดลอกแล้ว</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5" />
+                        <span>คัดลอก ID</span>
+                      </>
+                    )}
+                  </button>
+                  <a
+                    href={`https://docs.google.com/spreadsheets/d/${settings.linkedSpreadsheetId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-teal-700 hover:bg-slate-100"
+                  >
+                    <span>เปิดไฟล์</span>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                </div>
               </div>
             )}
           </section>
 
           {accessToken && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          {/* Left: Create or Link Spreadsheet */}
+          {/* Left: Create or Pick Spreadsheet */}
           <section className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 lg:col-span-6">
             <div>
               <h3 className="text-sm font-semibold text-slate-900">
@@ -498,33 +642,9 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
             </div>
 
             <div className="border-t border-slate-200 pt-4">
-              <h3 className="text-sm font-semibold text-slate-900">
-                2. หรือเชื่อมโยงจากไฟล์ Google Sheets ที่มีอยู่
-              </h3>
-              <div className="mt-3 flex gap-2">
-                <input
-                  type="text"
-                  value={linkInput}
-                  onChange={(e) => setLinkInput(e.target.value)}
-                  placeholder="วาง URL ของ Google Sheets หรือ Spreadsheet ID"
-                  className="font-mono-num flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:border-teal-600 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => handleConnectExisting(linkInput)}
-                  className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <Link2 className="h-3.5 w-3.5" />
-                  <span>เชื่อมต่อ</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="border-t border-slate-200 pt-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold text-slate-700">
-                  ไฟล์สเปรดชีตที่สร้างผ่านแอปนี้
+                  2. ไฟล์สเปรดชีตที่สร้างผ่านแอปนี้
                 </h3>
                 <button
                   type="button"
@@ -542,7 +662,7 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
                 <p className="mt-3 text-xs text-slate-500">กำลังโหลดรายการไฟล์...</p>
               ) : appSheets.length === 0 ? (
                 <p className="mt-3 text-xs text-slate-500">
-                  ยังไม่มีไฟล์สเปรดชีตที่สร้างจากแอปนี้ กด &ldquo;สร้างไฟล์ใหม่&rdquo; ด้านบนเพื่อเริ่มต้น
+                  ยังไม่มีไฟล์สเปรดชีตที่สร้างจากแอปนี้ กด &ldquo;สร้างไฟล์ใหม่&rdquo; ด้านบนเพื่อเริ่มต้น หรือผูก Spreadsheet ID จากการ์ดด้านบน
                 </p>
               ) : (
                 <ul className="mt-2.5 divide-y divide-slate-100 rounded-lg border border-slate-200">
@@ -553,7 +673,7 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
                     >
                       <button
                         type="button"
-                        onClick={() => handleConnectExisting(file.id)}
+                        onClick={() => handleBindSpreadsheetId(file.id)}
                         className="truncate text-left font-medium text-slate-800 hover:text-teal-700"
                       >
                         {file.name}
@@ -579,7 +699,7 @@ export const SheetsSyncWorkspace: React.FC<SheetsSyncWorkspaceProps> = ({
             {!settings.linkedSpreadsheetId ? (
               <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-6 text-center text-xs text-slate-500">
                 <FileSpreadsheet className="mx-auto mb-2 h-8 w-8 text-slate-300" />
-                ยังไม่ได้เลือกไฟล์ Google Sheets ปลายทาง
+                ยังไม่ได้ผูกไฟล์ Google Sheets ปลายทาง
               </div>
             ) : (
               <div className="mt-4 space-y-4">
