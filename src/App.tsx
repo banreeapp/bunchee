@@ -1,0 +1,662 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { User } from 'firebase/auth';
+import {
+  BarChart3,
+  BookOpen,
+  Download,
+  FileBarChart2,
+  FileSpreadsheet,
+  Settings,
+  Sparkles,
+} from 'lucide-react';
+import {
+  DEFAULT_PCU_SETTINGS,
+  DEFAULT_PROJECTS,
+  DEFAULT_TRANSACTIONS,
+} from './data/pcuCatalog';
+import {
+  getAccessToken,
+  googleSignIn,
+  initAuth,
+  logout,
+} from './services/googleAuth';
+import { syncAllToGoogleSheets } from './services/googleSheets';
+import {
+  BackupSyncSettings,
+  LedgerTransaction,
+  PcuSettings,
+} from './types/accounting';
+import {
+  downloadBackupJson,
+  formatThaiDateTime,
+  getBackupScheduleStatus,
+  normalizeBackupSyncSettings,
+} from './utils/backupJson';
+import { LedgerWorkspace } from './components/LedgerWorkspace';
+import { ReportsWorkspace } from './components/ReportsWorkspace';
+import { SummaryWorkspace } from './components/SummaryWorkspace';
+import { AiAccountantWorkspace } from './components/AiAccountantWorkspace';
+import { SheetsSyncWorkspace } from './components/SheetsSyncWorkspace';
+import { SettingsWorkspace } from './components/SettingsWorkspace';
+import { BackupReminderModal } from './components/BackupReminderModal';
+
+type AppSection = 'ledger' | 'reports' | 'summary' | 'ai' | 'sheets' | 'settings';
+
+const STORAGE_SETTINGS_KEY = 'pcu_ledger_settings_v1';
+const STORAGE_TXS_KEY = 'pcu_ledger_transactions_v1';
+
+export default function App() {
+  const [activeSection, setActiveSection] = useState<AppSection>('ledger');
+  const [selectedMonthKey, setSelectedMonthKey] = useState<string>('2026-10');
+  const [selectedDate407, setSelectedDate407] = useState<string>('2026-10-01');
+
+  const [settings, setSettings] = useState<PcuSettings>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_SETTINGS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<PcuSettings>;
+        return {
+          ...DEFAULT_PCU_SETTINGS,
+          ...parsed,
+          projects: parsed.projects || DEFAULT_PROJECTS,
+          backupSync: normalizeBackupSyncSettings(parsed.backupSync),
+        };
+      }
+    } catch {
+      // Fallback to default settings
+    }
+    return DEFAULT_PCU_SETTINGS;
+  });
+
+  const [transactions, setTransactions] = useState<LedgerTransaction[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_TXS_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // Fallback to baseline รพ.สต.บ้านรี transactions
+    }
+    return DEFAULT_TRANSACTIONS;
+  });
+
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+  // Backup reminder modal state (15-day schedule + pre-close reminder)
+  const [backupReminderOpen, setBackupReminderOpen] = useState(false);
+  const [backupReminderReason, setBackupReminderReason] = useState<
+    'scheduled_15d' | 'before_close'
+  >('scheduled_15d');
+  const dismissedScheduledInSessionRef = useRef(false);
+
+  // Google Workspace Auth state (access token is kept strictly in memory via googleAuth.ts)
+  const [user, setUser] = useState<User | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(() =>
+    getAccessToken()
+  );
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // 5-Minute Google Sheets Auto-Sync state
+  const [autoSyncStatus, setAutoSyncStatus] = useState<
+    'idle' | 'syncing' | 'error'
+  >('idle');
+  const [autoSyncError, setAutoSyncError] = useState('');
+  const [nextAutoSyncSeconds, setNextAutoSyncSeconds] = useState<number | null>(
+    null
+  );
+  const isAutoSyncingRef = useRef(false);
+
+  const backupSync = useMemo(
+    () => normalizeBackupSyncSettings(settings.backupSync),
+    [settings.backupSync]
+  );
+
+  const scheduleStatus = useMemo(
+    () => getBackupScheduleStatus(backupSync),
+    [backupSync]
+  );
+
+  // Keep refs fresh for background intervals
+  const latestSettingsRef = useRef(settings);
+  const latestTxsRef = useRef(transactions);
+  const latestMonthRef = useRef(selectedMonthKey);
+  const latestDate407Ref = useRef(selectedDate407);
+  const latestTokenRef = useRef(accessToken);
+
+  latestSettingsRef.current = settings;
+  latestTxsRef.current = transactions;
+  latestMonthRef.current = selectedMonthKey;
+  latestDate407Ref.current = selectedDate407;
+  latestTokenRef.current = accessToken;
+
+  useEffect(() => {
+    const unsub = initAuth(
+      (authedUser, token) => {
+        setUser(authedUser);
+        setAccessToken(token);
+      },
+      (maybeUser) => {
+        setUser(maybeUser);
+        setAccessToken(null);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(settings));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [settings]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_TXS_KEY, JSON.stringify(transactions));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [transactions]);
+
+  // Check 15-day backup schedule on load and every 5 minutes
+  useEffect(() => {
+    const checkSchedule = () => {
+      const cfg = normalizeBackupSyncSettings(
+        latestSettingsRef.current.backupSync
+      );
+      if (!cfg.backupReminderEnabled) return;
+      const status = getBackupScheduleStatus(cfg);
+      if (
+        cfg.lastBackupAt !== null &&
+        status.isDue &&
+        !dismissedScheduledInSessionRef.current
+      ) {
+        setBackupReminderReason('scheduled_15d');
+        setBackupReminderOpen(true);
+      }
+    };
+
+    checkSchedule();
+    const timer = window.setInterval(checkSchedule, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Warn before closing tab/window if 15-day backup is due or unsaved edits exist
+  useEffect(() => {
+    if (!backupSync.warnBeforeClose) return;
+    const shouldWarn = scheduleStatus.isDue || hasUnsavedChanges;
+    if (!shouldWarn) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [backupSync.warnBeforeClose, scheduleStatus.isDue, hasUnsavedChanges]);
+
+  // 5-Minute Google Sheets Auto-Save Timer
+  useEffect(() => {
+    const canAutoSync =
+      backupSync.sheetsConnectionEnabled &&
+      backupSync.autoSyncSheetsEnabled &&
+      Boolean(accessToken) &&
+      Boolean(settings.linkedSpreadsheetId);
+
+    if (!canAutoSync) {
+      setNextAutoSyncSeconds(null);
+      return;
+    }
+
+    const intervalSeconds = Math.max(
+      60,
+      backupSync.autoSyncIntervalMinutes * 60
+    );
+    let remaining = intervalSeconds;
+    setNextAutoSyncSeconds(remaining);
+
+    const tick = window.setInterval(() => {
+      if (isAutoSyncingRef.current) return;
+      remaining -= 1;
+      if (remaining <= 0) {
+        const token = latestTokenRef.current;
+        const currSettings = latestSettingsRef.current;
+        if (!token || !currSettings.linkedSpreadsheetId) return;
+
+        isAutoSyncingRef.current = true;
+        setAutoSyncStatus('syncing');
+        setAutoSyncError('');
+
+        syncAllToGoogleSheets(
+          token,
+          currSettings.linkedSpreadsheetId,
+          currSettings,
+          latestTxsRef.current,
+          latestMonthRef.current,
+          latestDate407Ref.current
+        )
+          .then(() => {
+            const syncedAt = new Date().toISOString();
+            setSettings((prev) => ({
+              ...prev,
+              backupSync: {
+                ...normalizeBackupSyncSettings(prev.backupSync),
+                lastAutoSyncAt: syncedAt,
+              },
+            }));
+            setAutoSyncStatus('idle');
+          })
+          .catch((err: unknown) => {
+            setAutoSyncStatus('error');
+            setAutoSyncError(
+              err instanceof Error
+                ? err.message
+                : 'ซิงก์อัตโนมัติไม่สำเร็จ'
+            );
+          })
+          .finally(() => {
+            isAutoSyncingRef.current = false;
+            remaining = intervalSeconds;
+            setNextAutoSyncSeconds(remaining);
+          });
+      } else {
+        setNextAutoSyncSeconds(remaining);
+      }
+    }, 1000);
+
+    return () => window.clearInterval(tick);
+  }, [
+    backupSync.sheetsConnectionEnabled,
+    backupSync.autoSyncSheetsEnabled,
+    backupSync.autoSyncIntervalMinutes,
+    accessToken,
+    settings.linkedSpreadsheetId,
+  ]);
+
+  const handleLogin = async () => {
+    setIsLoggingIn(true);
+    try {
+      const res = await googleSignIn();
+      setUser(res.user);
+      setAccessToken(res.accessToken);
+    } catch (err) {
+      console.error('Google Sign-In failed:', err);
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    setUser(null);
+    setAccessToken(null);
+  };
+
+  const handleUpdateBackupSync = (patch: Partial<BackupSyncSettings>) => {
+    setSettings((prev) => ({
+      ...prev,
+      backupSync: {
+        ...normalizeBackupSyncSettings(prev.backupSync),
+        ...patch,
+      },
+    }));
+  };
+
+  const handleBackupJsonNow = () => {
+    const result = downloadBackupJson(settings, transactions);
+    handleUpdateBackupSync({ lastBackupAt: result.exportedAt });
+    setHasUnsavedChanges(false);
+    dismissedScheduledInSessionRef.current = true;
+    return result;
+  };
+
+  const handleRestoreJsonBackup = (
+    nextSettings: PcuSettings,
+    nextTxs: LedgerTransaction[]
+  ) => {
+    setSettings({
+      ...nextSettings,
+      backupSync: normalizeBackupSyncSettings(nextSettings.backupSync),
+    });
+    setTransactions(nextTxs);
+    setHasUnsavedChanges(false);
+  };
+
+  const handleSaveGeneralSettings = (nextSettings: PcuSettings) => {
+    setSettings({
+      ...nextSettings,
+      backupSync: normalizeBackupSyncSettings(nextSettings.backupSync),
+    });
+    setHasUnsavedChanges(true);
+  };
+
+  const handleAddTransaction = (
+    draft: Omit<LedgerTransaction, 'id' | 'createdAt'>
+  ) => {
+    const nextTx: LedgerTransaction = {
+      ...draft,
+      id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      createdAt: new Date().toISOString(),
+    };
+    setTransactions((prev) => [...prev, nextTx]);
+    setHasUnsavedChanges(true);
+  };
+
+  const handleUpdateTransaction = (updated: LedgerTransaction) => {
+    setTransactions((prev) =>
+      prev.map((tx) => (tx.id === updated.id ? updated : tx))
+    );
+    setHasUnsavedChanges(true);
+  };
+
+  const handleDeleteTransaction = (id: string) => {
+    setTransactions((prev) => prev.filter((tx) => tx.id !== id));
+    setHasUnsavedChanges(true);
+  };
+
+  const handleResetDemoData = () => {
+    setSettings(DEFAULT_PCU_SETTINGS);
+    setTransactions(DEFAULT_TRANSACTIONS);
+    setSelectedMonthKey('2026-10');
+    setSelectedDate407('2026-10-01');
+    setHasUnsavedChanges(false);
+  };
+
+  const navItems: Array<{
+    id: AppSection;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }> = [
+    { id: 'ledger', label: 'บันทึกรายวัน', icon: BookOpen },
+    { id: 'reports', label: 'รายงานการเงิน', icon: FileBarChart2 },
+    { id: 'summary', label: 'สรุปรายรับ-รายจ่าย', icon: BarChart3 },
+    { id: 'ai', label: 'AI ผู้เชี่ยวชาญบัญชี', icon: Sparkles },
+    { id: 'sheets', label: 'Google Sheets', icon: FileSpreadsheet },
+    { id: 'settings', label: 'ตั้งค่าเริ่มต้น', icon: Settings },
+  ];
+
+  const sectionTitles: Record<AppSection, string> = {
+    ledger: 'สมุดรายวันรับ - จ่ายเงินบำรุง',
+    reports: 'รายงานการเงินมาตรฐาน รพ.สต.',
+    summary: 'สรุปรายรับ - รายจ่าย แยกรายวัน รายเดือน และหมวดหมู่',
+    ai: 'ผู้เชี่ยวชาญ AI ด้านบัญชี รพ.สต.',
+    sheets: 'เชื่อมต่อและซิงก์ Google Sheets',
+    settings: 'ตั้งค่าเริ่มต้นหน่วยงาน โครงการ / 402 / 404 และสำรองข้อมูล',
+  };
+
+  return (
+    <div className="flex min-h-screen bg-slate-50 text-slate-900">
+      {/* Sidebar Navigation */}
+      <aside className="no-print hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <p className="text-base font-bold tracking-tight text-slate-900">
+            PCU Ledger
+          </p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">
+            {settings.unitName}
+          </p>
+          <p className="text-[11px] text-slate-400">
+            ปีงบประมาณ {settings.fiscalYearBE} · {settings.address}
+          </p>
+        </div>
+
+        <nav className="flex-1 space-y-1 p-3">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const active = activeSection === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveSection(item.id)}
+                className={`flex w-full items-center gap-3 whitespace-nowrap rounded-lg px-3.5 py-2.5 text-left text-sm font-medium transition-colors ${
+                  active
+                    ? 'bg-teal-50 font-semibold text-teal-800'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="space-y-3 border-t border-slate-200 p-4 text-xs text-slate-500">
+          <div>
+            <p className="font-medium text-slate-700">
+              {!backupSync.sheetsConnectionEnabled
+                ? 'ปิดการเชื่อม Sheets ชั่วคราว'
+                : accessToken
+                ? backupSync.autoSyncSheetsEnabled
+                  ? `ซิงก์ Sheets อัตโนมัติทุก ${backupSync.autoSyncIntervalMinutes} นาที`
+                  : 'เชื่อมต่อ Google Sheets แล้ว'
+                : 'ยังไม่ได้เชื่อมต่อ Google'}
+            </p>
+            <p className="mt-0.5 truncate">
+              {backupSync.sheetsConnectionEnabled
+                ? settings.linkedSpreadsheetTitle || 'เลือกไฟล์หรือสร้างไฟล์ใหม่'
+                : 'บันทึกข้อมูลเฉพาะในเครื่อง'}
+            </p>
+          </div>
+
+          <div className="border-t border-slate-100 pt-3">
+            <p className="text-[11px] text-slate-500">
+              สำรอง JSON:{' '}
+              <span
+                className={
+                  scheduleStatus.isDue
+                    ? 'font-semibold text-amber-700'
+                    : 'font-medium text-slate-700'
+                }
+              >
+                {backupSync.lastBackupAt
+                  ? formatThaiDateTime(backupSync.lastBackupAt)
+                  : 'ยังไม่เคยสำรอง'}
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setBackupReminderReason('before_close');
+                setBackupReminderOpen(true);
+              }}
+              className="mt-2 inline-flex w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span>สำรอง JSON ก่อนปิดไฟล์</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Clean Top Bar (3-zone contract) */}
+        <header className="no-print flex items-center justify-between gap-8 border-b border-slate-200 bg-white px-6 py-3.5">
+          <div className="min-w-0">
+            <h1 className="truncate text-base font-semibold text-slate-900">
+              {sectionTitles[activeSection]}
+            </h1>
+          </div>
+
+          <nav className="flex items-center gap-4 overflow-x-auto text-xs font-medium text-slate-600 lg:hidden">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveSection(item.id)}
+                className={`whitespace-nowrap shrink-0 pb-0.5 ${
+                  activeSection === item.id
+                    ? 'border-b-2 border-teal-700 font-semibold text-teal-800'
+                    : 'text-slate-600'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="flex shrink-0 items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                setBackupReminderReason('before_close');
+                setBackupReminderOpen(true);
+              }}
+              className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-2 text-xs font-semibold ${
+                scheduleStatus.isDue || hasUnsavedChanges
+                  ? 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span>สำรอง JSON</span>
+            </button>
+
+            {!backupSync.sheetsConnectionEnabled ? (
+              <button
+                type="button"
+                onClick={() => setActiveSection('sheets')}
+                className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-slate-200 bg-slate-100 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                <span>Sheets ปิดอยู่</span>
+              </button>
+            ) : accessToken ? (
+              <button
+                type="button"
+                onClick={() => setActiveSection('sheets')}
+                className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-teal-700 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-800"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                <span>
+                  {autoSyncStatus === 'syncing'
+                    ? 'กำลังซิงก์ Sheets...'
+                    : 'ซิงก์ Google Sheets'}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setActiveSection('sheets')}
+                className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                <span>เชื่อมต่อ Google Sheets</span>
+              </button>
+            )}
+          </div>
+        </header>
+
+        <main className="mx-auto w-full max-w-[1320px] flex-1 p-5 lg:p-6">
+          {activeSection === 'ledger' && (
+            <LedgerWorkspace
+              settings={settings}
+              transactions={transactions}
+              selectedMonthKey={selectedMonthKey}
+              onChangeMonth={setSelectedMonthKey}
+              onAddTransaction={handleAddTransaction}
+              onUpdateTransaction={handleUpdateTransaction}
+              onDeleteTransaction={handleDeleteTransaction}
+              onOpenAiEntry={() => setActiveSection('ai')}
+            />
+          )}
+
+          {activeSection === 'reports' && (
+            <ReportsWorkspace
+              settings={settings}
+              transactions={transactions}
+              selectedMonthKey={selectedMonthKey}
+              onChangeMonth={setSelectedMonthKey}
+              selectedDate407={selectedDate407}
+              onChangeDate407={setSelectedDate407}
+              onGoToSheetsSync={() => setActiveSection('sheets')}
+            />
+          )}
+
+          {activeSection === 'summary' && (
+            <SummaryWorkspace
+              settings={settings}
+              transactions={transactions}
+              selectedMonthKey={selectedMonthKey}
+              onChangeMonth={setSelectedMonthKey}
+              onGoToSheetsSync={() => setActiveSection('sheets')}
+            />
+          )}
+
+          {activeSection === 'ai' && (
+            <AiAccountantWorkspace
+              settings={settings}
+              transactions={transactions}
+              selectedMonthKey={selectedMonthKey}
+              onAddTransaction={handleAddTransaction}
+            />
+          )}
+
+          {activeSection === 'sheets' && (
+            <SheetsSyncWorkspace
+              user={user}
+              accessToken={accessToken}
+              isLoggingIn={isLoggingIn}
+              onLogin={handleLogin}
+              onLogout={handleLogout}
+              settings={settings}
+              transactions={transactions}
+              selectedMonthKey={selectedMonthKey}
+              selectedDate407={selectedDate407}
+              autoSyncStatus={autoSyncStatus}
+              autoSyncError={autoSyncError}
+              nextAutoSyncSeconds={nextAutoSyncSeconds}
+              onUpdateSettings={handleSaveGeneralSettings}
+              onUpdateBackupSync={handleUpdateBackupSync}
+              onReplaceAllData={(nextSettings, nextTxs) => {
+                handleRestoreJsonBackup(nextSettings, nextTxs);
+              }}
+            />
+          )}
+
+          {activeSection === 'settings' && (
+            <SettingsWorkspace
+              settings={settings}
+              transactions={transactions}
+              hasUnsavedChanges={hasUnsavedChanges}
+              onSaveSettings={handleSaveGeneralSettings}
+              onResetDemoData={handleResetDemoData}
+              onBackupJsonNow={handleBackupJsonNow}
+              onRestoreJsonBackup={handleRestoreJsonBackup}
+              onOpenPreCloseReminder={() => {
+                setBackupReminderReason('before_close');
+                setBackupReminderOpen(true);
+              }}
+              onUpdateBackupSync={handleUpdateBackupSync}
+            />
+          )}
+        </main>
+      </div>
+
+      {/* 15-Day Scheduled & Pre-Close JSON Backup Reminder Popup */}
+      <BackupReminderModal
+        open={backupReminderOpen}
+        triggerReason={backupReminderReason}
+        scheduleStatus={scheduleStatus}
+        intervalDays={backupSync.backupIntervalDays}
+        lastBackupAt={backupSync.lastBackupAt}
+        hasUnsavedChanges={hasUnsavedChanges}
+        transactionCount={transactions.length}
+        onBackupNow={() => {
+          handleBackupJsonNow();
+          setBackupReminderOpen(false);
+        }}
+        onRemindLater={() => {
+          dismissedScheduledInSessionRef.current = true;
+          setBackupReminderOpen(false);
+        }}
+        onDismissWithoutBackup={() => {
+          dismissedScheduledInSessionRef.current = true;
+          setBackupReminderOpen(false);
+        }}
+      />
+    </div>
+  );
+}

@@ -1,0 +1,8 @@
+{
+  "name": "PCU Ledger - ระบบบัญชีการเงิน รพ.สต.",
+  "description": "ระบบจัดทำบัญชีรายรับ-รายจ่าย รายงานแบบ 401, 404, 407 และงบเดือนเงินบำรุงของโรงพยาบาลส่งเสริมสุขภาพตำบล เชื่อมต่อ Google Sheets พร้อมผู้เชี่ยวชาญ AI ด้านบัญชี",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
