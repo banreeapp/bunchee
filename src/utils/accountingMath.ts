@@ -1241,3 +1241,111 @@ export function computeExpenseGroupDrilldown(
   };
 }
 
+export interface RemainingBalanceAccountRow {
+  id: string;
+  order: number;
+  name: string;
+  accountNo: string;
+  bankBalance: number;
+  cashInHand: number;
+  chequeInHand: number;
+  loanAndAdvance: number;
+  total: number;
+}
+
+export interface RemainingBalanceReport {
+  monthKey: string;
+  endOfMonthDate: string;
+  budgetAccounts: RemainingBalanceAccountRow[];
+  totalBudget: number;
+  nonBudgetCashInHand: number;
+  nonBudgetChequeInHand: number;
+  nonBudgetLoanAndAdvance: number;
+  nonBudgetDeposits: Array<{
+    id: string;
+    order: number;
+    name: string;
+    accountNo: string;
+    bankBalance: number;
+  }>;
+  totalNonBudget: number;
+  grandTotal: number;
+}
+
+export function computeRemainingBalanceReport(
+  settings: PcuSettings,
+  transactions: LedgerTransaction[],
+  monthKey: string
+): RemainingBalanceReport {
+  const [y, m] = monthKey.split('-').map(Number);
+  const lastDay = y && m ? new Date(y, m, 0).getDate() : 31;
+  const endOfMonthDate = `${y}-${String(m).padStart(2, '0')}-${String(
+    lastDay
+  ).padStart(2, '0')}`;
+
+  const snapshots = computeAccountBalances(
+    settings,
+    transactions,
+    endOfMonthDate
+  );
+
+  const budgetSnaps = snapshots.filter(
+    (s) => s.account.fundType === 'งบประมาณ'
+  );
+  const nonBudgetSnaps = snapshots.filter(
+    (s) => s.account.fundType !== 'งบประมาณ'
+  );
+
+  const budgetAccounts: RemainingBalanceAccountRow[] = budgetSnaps.map((s) => ({
+    id: s.account.id,
+    order: s.account.order,
+    name: s.account.name,
+    accountNo: s.account.accountNo,
+    bankBalance: s.bankBalance,
+    cashInHand: s.cashInHand,
+    chequeInHand: s.chequeInHand,
+    loanAndAdvance: s.loanAndAdvance,
+    total: s.totalBalance,
+  }));
+
+  const totalBudget = budgetAccounts.reduce((sum, a) => sum + a.total, 0);
+
+  const nonBudgetCashInHand = nonBudgetSnaps.reduce(
+    (sum, s) => sum + s.cashInHand,
+    0
+  );
+  const nonBudgetChequeInHand = nonBudgetSnaps.reduce(
+    (sum, s) => sum + s.chequeInHand,
+    0
+  );
+  const nonBudgetLoanAndAdvance = nonBudgetSnaps.reduce(
+    (sum, s) => sum + s.loanAndAdvance,
+    0
+  );
+
+  const nonBudgetDeposits = nonBudgetSnaps.map((s) => ({
+    id: s.account.id,
+    order: s.account.order,
+    name: s.account.name,
+    accountNo: s.account.accountNo,
+    bankBalance: s.bankBalance,
+  }));
+
+  const totalNonBudget = nonBudgetSnaps.reduce(
+    (sum, s) => sum + s.totalBalance,
+    0
+  );
+
+  return {
+    monthKey,
+    endOfMonthDate,
+    budgetAccounts,
+    totalBudget,
+    nonBudgetCashInHand,
+    nonBudgetChequeInHand,
+    nonBudgetLoanAndAdvance,
+    nonBudgetDeposits,
+    totalNonBudget,
+    grandTotal: totalBudget + totalNonBudget,
+  };
+}

@@ -14,6 +14,7 @@ import {
   computeIncomeCategoryByMonthMatrix,
   computeMonthlyStatement,
   computeProjectBalances,
+  computeRemainingBalanceReport,
   computeVoucherSummary,
   formatThaiDateFull,
   getCategoryLabel,
@@ -34,6 +35,7 @@ export const PCU_SHEET_TABS = {
   MONTHLY: 'งบเดือน_รับจ่าย',
   ACCRUAL: 'งบเดือน_เกณฑ์คงค้าง',
   VOUCHER: 'หน้างบใบสำคัญ',
+  REMAINING_BALANCE: 'รายงานประเภทเงินคงเหลือ',
   SUMMARY_INCOME: 'สรุปรายรับ_รายเดือน',
   SUMMARY_EXPENSE: 'สรุปรายจ่าย_รายเดือน',
 };
@@ -487,7 +489,45 @@ export async function syncAllToGoogleSheets(
   voucherRows.push(['', 'รวมเงินทั้งหมด', voucher.grandTotal]);
   voucherRows.push(['', `เจ้าหน้าที่การเงิน: ${settings.officers.financeOfficer}`, '']);
 
-  // 10. สรุปรายรับ_รายเดือน
+  // 10. รายงานประเภทเงินคงเหลือ
+  const remReport = computeRemainingBalanceReport(
+    settings,
+    transactions,
+    selectedMonthKey
+  );
+  const remMonthInfo =
+    FISCAL_MONTHS.find((m) => m.key === selectedMonthKey) || FISCAL_MONTHS[0];
+  const remainingBalanceRows: (string | number)[][] = [
+    [`${settings.unitName} - รายงานการเงินประเภทเงินคงเหลือ ประจำเดือน ${remMonthInfo.monthName} พ.ศ. ${remMonthInfo.beYear}`],
+    [`ณ วันที่ ${formatThaiDateFull(remReport.endOfMonthDate)}`],
+    ['ประเภทเงิน', 'รายละเอียดรายการ / บัญชีเงินฝาก', 'จำนวนเงิน (บาท)'],
+    ['เงินงบประมาณ', 'เงินเบิกเพื่อจ่ายในรายการ/หมวด', 0],
+    ...remReport.budgetAccounts.map((acc, idx) => [
+      '',
+      `${idx + 1}. ${acc.name}${acc.accountNo ? ` (${acc.accountNo})` : ''}`,
+      acc.total,
+    ]),
+    ['', 'รวมเงินงบประมาณคงเหลือ', remReport.totalBudget],
+    ['เงินรายได้แผ่นดิน', 'ประเภทเงินรายได้แผ่นดิน', 0],
+    ['', 'รวมเงินรายได้แผ่นดินคงเหลือ', 0],
+    ['เงินนอกงบประมาณ', 'ประเภทเงินสดในมือ', remReport.nonBudgetCashInHand],
+    ...(remReport.nonBudgetChequeInHand > 0
+      ? [['', 'ประเภทเช็คในมือ', remReport.nonBudgetChequeInHand]]
+      : []),
+    ...(remReport.nonBudgetLoanAndAdvance > 0
+      ? [['', 'ประเภทลูกหนี้เงินยืม / สำรองจ่าย', remReport.nonBudgetLoanAndAdvance]]
+      : []),
+    ['', 'ประเภทเงินฝาก', ''],
+    ...remReport.nonBudgetDeposits.map((dep, idx) => [
+      '',
+      `${idx + 1}. ${dep.name}${dep.accountNo ? ` (เลขที่ ${dep.accountNo})` : ''}`,
+      dep.bankBalance,
+    ]),
+    ['', 'รวมเงินนอกงบประมาณคงเหลือ', remReport.totalNonBudget],
+    ['รวมเงินคงเหลือทั้งสิ้น', '', remReport.grandTotal],
+  ];
+
+  // 11. สรุปรายรับ_รายเดือน
   const incMatrix = computeIncomeCategoryByMonthMatrix(transactions, FISCAL_MONTHS);
   const summaryIncomeRows: (string | number)[][] = [
     [`สรุปรายรับ แยกประเภท / เดือน ปีงบประมาณ ${settings.fiscalYearBE} - ${settings.unitName}`],
@@ -505,7 +545,7 @@ export async function syncAllToGoogleSheets(
     ],
   ];
 
-  // 11. สรุปรายจ่าย_รายเดือน
+  // 12. สรุปรายจ่าย_รายเดือน
   const expMatrix = computeExpenseCategoryByMonthMatrix(
     transactions,
     FISCAL_MONTHS,
@@ -537,6 +577,7 @@ export async function syncAllToGoogleSheets(
     { title: PCU_SHEET_TABS.MONTHLY, values: monthlyRows },
     { title: PCU_SHEET_TABS.ACCRUAL, values: accrualRows },
     { title: PCU_SHEET_TABS.VOUCHER, values: voucherRows },
+    { title: PCU_SHEET_TABS.REMAINING_BALANCE, values: remainingBalanceRows },
     { title: PCU_SHEET_TABS.SUMMARY_INCOME, values: summaryIncomeRows },
     { title: PCU_SHEET_TABS.SUMMARY_EXPENSE, values: summaryExpenseRows },
   ];

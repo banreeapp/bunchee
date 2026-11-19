@@ -8,6 +8,7 @@ import {
   computeForm404,
   computeForm407,
   computeMonthlyStatement,
+  computeRemainingBalanceReport,
   computeVoucherSummary,
   formatMoney,
   formatMoneyOrDash,
@@ -34,7 +35,33 @@ type ReportTab =
   | 'voucher'
   | 'form401'
   | 'form404'
-  | 'form407';
+  | 'form407'
+  | 'remaining_balance';
+
+const COMMITMENT_ITEMS: Array<{
+  key: string;
+  label: string;
+  indent?: boolean;
+  isHeaderOnly?: boolean;
+}> = [
+  { key: 'material', label: '- ค่าวัสดุ' },
+  { key: 'equipment', label: '- ค่าครุภัณฑ์' },
+  { key: 'medical_supply', label: '- ค่าเวชภัณฑ์และเคมีภัณฑ์' },
+  { key: 'land_building', label: '- ค่าที่ดินและสิ่งก่อสร้าง' },
+  {
+    key: 'utility_header',
+    label: '- ค่าสาธารณูปโภคที่ไม่อาจเบิกจากงบประมาณ',
+    isHeaderOnly: true,
+  },
+  { key: 'electricity', label: '- ค่าไฟฟ้า', indent: true },
+  { key: 'water', label: '- ค่าประปา', indent: true },
+  { key: 'internet', label: '- ค่าบริการอินเตอร์เนต', indent: true },
+  { key: 'postage', label: '- ค่าส่งไปรษณีย์', indent: true },
+  { key: 'welfare_medical', label: '- ค่ารักษาพยาบาลผู้ที่มีรายได้น้อย' },
+  { key: 'compensation', label: '- ค่าตอบแทน' },
+  { key: 'services', label: '- ค่าใช้สอย' },
+  { key: 'other_tax', label: '- ค่าอื่นๆ ภาษี' },
+];
 
 export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({
   settings,
@@ -46,6 +73,13 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({
   onGoToSheetsSync,
 }) => {
   const [activeTab, setActiveTab] = useState<ReportTab>('monthly');
+
+  // Optional commitment amounts (รายการที่จะต้องจ่ายตามใบสั่งหรือสัญญา) & extra budget/revenue lines
+  const [commitments, setCommitments] = useState<Record<string, number>>({});
+  const [extraBudgetDesc, setExtraBudgetDesc] = useState('');
+  const [extraBudgetAmount, setExtraBudgetAmount] = useState(0);
+  const [stateRevenueDesc, setStateRevenueDesc] = useState('');
+  const [stateRevenueAmount, setStateRevenueAmount] = useState(0);
 
   const monthInfo =
     FISCAL_MONTHS.find((m) => m.key === selectedMonthKey) || FISCAL_MONTHS[0];
@@ -80,6 +114,27 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({
     () => computeForm407(settings, transactions, selectedDate407),
     [settings, transactions, selectedDate407]
   );
+
+  const remainingBalance = useMemo(
+    () =>
+      computeRemainingBalanceReport(settings, transactions, selectedMonthKey),
+    [settings, transactions, selectedMonthKey]
+  );
+
+  const totalCommitments = useMemo(
+    () =>
+      COMMITMENT_ITEMS.reduce(
+        (sum, item) =>
+          item.isHeaderOnly ? sum : sum + (commitments[item.key] || 0),
+        0
+      ),
+    [commitments]
+  );
+
+  const totalBudgetFinal = remainingBalance.totalBudget + extraBudgetAmount;
+  const totalRevenueFinal = stateRevenueAmount;
+  const grandTotalRemaining =
+    totalBudgetFinal + totalRevenueFinal + remainingBalance.totalNonBudget;
 
   return (
     <div className="space-y-5">
@@ -151,6 +206,17 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({
             }`}
           >
             คงเหลือประจำวัน แบบ 407
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('remaining_balance')}
+            className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+              activeTab === 'remaining_balance'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            รายงานประเภทเงินคงเหลือ
           </button>
         </div>
 
@@ -551,6 +617,105 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({
                   </span>{' '}
                   บาท
                 </p>
+              </div>
+            </div>
+
+            {/* รายการที่จะต้องจ่ายตามใบสั่งหรือสัญญา & หนังสือนำส่งใบสำคัญคู่จ่าย */}
+            <div className="border-t border-dashed border-slate-300 pt-5">
+              <table className="w-full border-collapse border border-slate-300 text-xs">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-900">
+                    <th
+                      colSpan={3}
+                      className="border border-slate-300 px-3 py-2 text-left font-bold"
+                    >
+                      รายการที่จะต้องจ่ายตามใบสั่งหรือสัญญา
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {COMMITMENT_ITEMS.map((item) => (
+                    <tr key={item.key}>
+                      <td
+                        className={`border border-slate-200 px-3 py-1.5 text-slate-800 ${
+                          item.indent ? 'pl-8' : ''
+                        } ${item.isHeaderOnly ? 'font-medium' : ''}`}
+                      >
+                        {item.label}
+                      </td>
+                      <td className="w-40 border border-slate-200 px-2 py-1 text-right">
+                        {!item.isHeaderOnly && (
+                          <input
+                            type="number"
+                            step="0.01"
+                            min={0}
+                            value={commitments[item.key] || ''}
+                            placeholder="0.00"
+                            onChange={(e) =>
+                              setCommitments((prev) => ({
+                                ...prev,
+                                [item.key]: Number(e.target.value) || 0,
+                              }))
+                            }
+                            className="font-mono-num w-full rounded border border-slate-200 px-2 py-0.5 text-right text-xs tabular-nums print:border-none print:bg-transparent print:p-0"
+                          />
+                        )}
+                      </td>
+                      <td className="w-16 border border-slate-200 px-3 py-1.5 text-center text-slate-600">
+                        {item.isHeaderOnly ? '' : 'บาท'}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bg-slate-50 font-bold text-slate-900">
+                    <td className="border border-slate-300 px-3 py-2 text-right">
+                      รวม
+                    </td>
+                    <td className="font-mono-num border-y-2 border-x border-slate-400 px-3 py-2 text-right tabular-nums">
+                      {formatMoney(totalCommitments)}
+                    </td>
+                    <td className="border border-slate-300 px-3 py-2 text-center">
+                      บาท
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div className="mt-5 space-y-2 border border-slate-300 p-5 text-xs text-slate-800">
+                <p className="font-semibold">
+                  ที่ {settings.docPrefixes.expensePrefix || 'สบ 1133.6.2/'}
+                </p>
+                <p>
+                  เรียน {settings.affiliationLabel || 'สาธารณสุขอำเภอดอนพุด'}
+                </p>
+                <p className="pl-8 leading-relaxed">
+                  พร้อมนี้ได้ส่งใบสำคัญคู่จ่ายมาด้วย{' '}
+                  <span className="font-mono-num font-semibold underline">
+                    {voucherSummary.groups.reduce(
+                      (cnt, g) => cnt + g.items.length,
+                      0
+                    )}
+                  </span>{' '}
+                  ฉบับ เป็นเงิน{' '}
+                  <span className="font-mono-num font-semibold underline tabular-nums">
+                    {formatMoney(voucherSummary.grandTotal)}
+                  </span>{' '}
+                  บาท ตามรายละเอียดที่แนบมา
+                </p>
+
+                <div className="mt-6 grid grid-cols-1 gap-6 pt-4 text-center sm:grid-cols-2">
+                  <div>
+                    <p>(ลงชื่อ)...................................................เจ้าหน้าที่การเงิน</p>
+                    <p className="mt-1 font-medium text-slate-900">
+                      ( {settings.officers.financeOfficer} )
+                    </p>
+                  </div>
+                  <div>
+                    <p>(ลงชื่อ)...................................................หัวหน้าหน่วยบริการ</p>
+                    <p className="mt-1 font-medium text-slate-900">
+                      ( {settings.officers.unitHead} )
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1125,6 +1290,254 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({
               </p>
               <p className="mt-1 font-medium text-slate-900">
                 ({settings.officers.cashReceiver407})
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. รายงานการเงินประเภทเงินคงเหลือ */}
+      {activeTab === 'remaining_balance' && (
+        <div className="print-sheet rounded-xl border border-slate-200 bg-white p-6">
+          <div className="mb-5 text-center">
+            <h2 className="text-base font-bold text-slate-900">
+              {settings.unitName}
+            </h2>
+            <p className="mt-0.5 text-sm font-bold text-slate-800">
+              รายงานการเงินประเภทเงินคงเหลือ
+            </p>
+            <p className="mt-0.5 text-xs text-slate-600">
+              ประจำเดือน {monthInfo.monthName} พ.ศ. {monthInfo.beYear} (ณ วันที่{' '}
+              {formatThaiDateFull(remainingBalance.endOfMonthDate)})
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse border border-slate-400 text-xs">
+              <thead>
+                <tr className="bg-slate-100 text-slate-900">
+                  <th className="w-44 border border-slate-400 px-3 py-2 text-left font-bold">
+                    ประเภทเงิน
+                  </th>
+                  <th className="border border-slate-400 px-3 py-2 text-left font-bold">
+                    รายละเอียดรายการ / บัญชีเงินฝาก
+                  </th>
+                  <th className="w-44 border border-slate-400 px-3 py-2 text-right font-bold">
+                    จำนวนเงิน(บาท)
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {/* 1. เงินงบประมาณ */}
+                <tr>
+                  <td
+                    rowSpan={
+                      Math.max(remainingBalance.budgetAccounts.length, 0) + 3
+                    }
+                    className="border border-slate-300 bg-slate-50/50 px-3 py-2 align-top font-bold text-slate-900"
+                  >
+                    เงินงบประมาณ
+                  </td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-700">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>เงินเบิกเพื่อจ่ายในรายการที่ / หมวด:</span>
+                      <input
+                        type="text"
+                        value={extraBudgetDesc}
+                        onChange={(e) => setExtraBudgetDesc(e.target.value)}
+                        placeholder="ระบุรายการ / หมวด (ถ้ามี)..."
+                        className="min-w-[200px] flex-1 rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-800 print:border-none print:bg-transparent print:p-0"
+                      />
+                    </div>
+                  </td>
+                  <td className="border border-slate-200 px-3 py-2 text-right">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={extraBudgetAmount || ''}
+                      placeholder="0.00"
+                      onChange={(e) =>
+                        setExtraBudgetAmount(Number(e.target.value) || 0)
+                      }
+                      className="font-mono-num w-full rounded border border-slate-200 px-2 py-0.5 text-right text-xs tabular-nums print:border-none print:bg-transparent print:p-0"
+                    />
+                  </td>
+                </tr>
+                {remainingBalance.budgetAccounts.length === 0 ? (
+                  <tr>
+                    <td className="border border-slate-200 px-3 py-1.5 text-center text-slate-500">
+                      -
+                    </td>
+                    <td className="font-mono-num border border-slate-200 px-3 py-1.5 text-right tabular-nums">
+                      -
+                    </td>
+                  </tr>
+                ) : (
+                  remainingBalance.budgetAccounts.map((acc, idx) => (
+                    <tr key={acc.id}>
+                      <td className="border border-slate-200 px-3 py-1.5 text-slate-800">
+                        {idx + 1}. {acc.name}{' '}
+                        {acc.accountNo ? `(เลขที่ ${acc.accountNo})` : ''}
+                      </td>
+                      <td className="font-mono-num border border-slate-200 px-3 py-1.5 text-right tabular-nums">
+                        {formatMoney(acc.total)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+                <tr className="bg-slate-50 font-bold text-slate-900">
+                  <td className="border border-slate-300 px-3 py-2 text-center">
+                    รวมเงินงบประมาณคงเหลือ
+                  </td>
+                  <td className="font-mono-num border-2 border-slate-400 px-3 py-2 text-right tabular-nums">
+                    {formatMoney(totalBudgetFinal)}
+                  </td>
+                </tr>
+
+                {/* 2. เงินรายได้แผ่นดิน */}
+                <tr>
+                  <td
+                    rowSpan={2}
+                    className="border border-slate-300 bg-slate-50/50 px-3 py-2 align-top font-bold text-slate-900"
+                  >
+                    เงินรายได้แผ่นดิน
+                  </td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-700">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>ประเภท:</span>
+                      <input
+                        type="text"
+                        value={stateRevenueDesc}
+                        onChange={(e) => setStateRevenueDesc(e.target.value)}
+                        placeholder="ระบุประเภทเงินรายได้แผ่นดิน (ถ้ามี)..."
+                        className="min-w-[200px] flex-1 rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-800 print:border-none print:bg-transparent print:p-0"
+                      />
+                    </div>
+                  </td>
+                  <td className="border border-slate-200 px-3 py-2 text-right">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      value={stateRevenueAmount || ''}
+                      placeholder="0.00"
+                      onChange={(e) =>
+                        setStateRevenueAmount(Number(e.target.value) || 0)
+                      }
+                      className="font-mono-num w-full rounded border border-slate-200 px-2 py-0.5 text-right text-xs tabular-nums print:border-none print:bg-transparent print:p-0"
+                    />
+                  </td>
+                </tr>
+                <tr className="bg-slate-50 font-bold text-slate-900">
+                  <td className="border border-slate-300 px-3 py-2 text-center">
+                    รวมเงินรายได้แผ่นดินคงเหลือ
+                  </td>
+                  <td className="font-mono-num border-2 border-slate-400 px-3 py-2 text-right tabular-nums">
+                    {formatMoney(totalRevenueFinal)}
+                  </td>
+                </tr>
+
+                {/* 3. เงินนอกงบประมาณ */}
+                <tr>
+                  <td
+                    rowSpan={
+                      3 +
+                      (remainingBalance.nonBudgetChequeInHand > 0 ? 1 : 0) +
+                      (remainingBalance.nonBudgetLoanAndAdvance > 0 ? 1 : 0) +
+                      remainingBalance.nonBudgetDeposits.length
+                    }
+                    className="border border-slate-300 bg-slate-50/50 px-3 py-2 align-top font-bold text-slate-900"
+                  >
+                    เงินนอกงบประมาณ
+                  </td>
+                  <td className="border border-slate-200 px-3 py-2 font-medium text-slate-800">
+                    ประเภทเงินสดในมือ
+                  </td>
+                  <td className="font-mono-num border border-slate-200 px-3 py-2 text-right tabular-nums">
+                    {formatMoneyOrDash(remainingBalance.nonBudgetCashInHand)}
+                  </td>
+                </tr>
+
+                {remainingBalance.nonBudgetChequeInHand > 0 && (
+                  <tr>
+                    <td className="border border-slate-200 px-3 py-2 font-medium text-slate-800">
+                      ประเภทเช็คในมือ
+                    </td>
+                    <td className="font-mono-num border border-slate-200 px-3 py-2 text-right tabular-nums">
+                      {formatMoney(remainingBalance.nonBudgetChequeInHand)}
+                    </td>
+                  </tr>
+                )}
+
+                {remainingBalance.nonBudgetLoanAndAdvance > 0 && (
+                  <tr>
+                    <td className="border border-slate-200 px-3 py-2 font-medium text-slate-800">
+                      ประเภทลูกหนี้เงินยืม / สำรองจ่าย
+                    </td>
+                    <td className="font-mono-num border border-slate-200 px-3 py-2 text-right tabular-nums">
+                      {formatMoney(remainingBalance.nonBudgetLoanAndAdvance)}
+                    </td>
+                  </tr>
+                )}
+
+                <tr>
+                  <td
+                    colSpan={2}
+                    className="border border-slate-200 px-3 py-2 font-medium text-slate-800"
+                  >
+                    ประเภทเงินฝาก
+                  </td>
+                </tr>
+
+                {remainingBalance.nonBudgetDeposits.map((dep, idx) => (
+                  <tr key={dep.id} className="hover:bg-slate-50/70">
+                    <td className="border border-slate-200 py-1.5 pl-7 pr-3 text-slate-800">
+                      {idx + 1}. {dep.name}{' '}
+                      {dep.accountNo ? `(เลขที่ ${dep.accountNo})` : ''}
+                    </td>
+                    <td className="font-mono-num border border-slate-200 px-3 py-1.5 text-right tabular-nums">
+                      {formatMoney(dep.bankBalance)}
+                    </td>
+                  </tr>
+                ))}
+
+                <tr className="bg-slate-50 font-bold text-slate-900">
+                  <td className="border border-slate-300 px-3 py-2 text-center">
+                    รวมเงินนอกงบประมาณคงเหลือ
+                  </td>
+                  <td className="font-mono-num border-2 border-slate-400 px-3 py-2 text-right tabular-nums">
+                    {formatMoney(remainingBalance.totalNonBudget)}
+                  </td>
+                </tr>
+
+                {/* รวมเงินคงเหลือทั้งสิ้น */}
+                <tr className="bg-teal-50/80 font-bold text-slate-900">
+                  <td
+                    colSpan={2}
+                    className="border border-slate-400 px-3 py-2.5 text-center text-sm"
+                  >
+                    รวมเงินคงเหลือทั้งสิ้น
+                  </td>
+                  <td className="font-mono-num border-2 border-slate-900 px-3 py-2.5 text-right text-sm text-teal-900 tabular-nums">
+                    {formatMoney(grandTotalRemaining)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-8 grid grid-cols-1 gap-6 text-center text-xs text-slate-700 sm:grid-cols-2">
+            <div>
+              <p>(ลงชื่อ)...................................................เจ้าหน้าที่การเงิน</p>
+              <p className="mt-1 font-medium text-slate-900">
+                ( {settings.officers.financeOfficer} )
+              </p>
+            </div>
+            <div>
+              <p>(ลงชื่อ)...................................................หัวหน้าหน่วยบริการ</p>
+              <p className="mt-1 font-medium text-slate-900">
+                ( {settings.officers.unitHead} )
               </p>
             </div>
           </div>
