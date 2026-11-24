@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { FileSpreadsheet, Printer } from 'lucide-react';
 import { FISCAL_MONTHS } from '../data/pcuCatalog';
 import { LedgerTransaction, PcuSettings } from '../types/accounting';
+import { MonthlyTrendChart } from './MonthlyTrendChart';
 import {
   computeExpenseCategoryByMonthMatrix,
   computeExpenseByDetailType,
@@ -213,6 +214,15 @@ export const SummaryWorkspace: React.FC<SummaryWorkspaceProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Annual Monthly Income vs Expense Recharts Overview */}
+      <MonthlyTrendChart
+        settings={settings}
+        transactions={transactions}
+        selectedMonthKey={selectedMonthKey}
+        projectScope={mainSection === 'expense' ? projectScope : 'all'}
+        onSelectMonth={onChangeMonth}
+      />
 
       {/* ============================ */}
       {/* SECTION 1: สรุป รายรับ        */}
