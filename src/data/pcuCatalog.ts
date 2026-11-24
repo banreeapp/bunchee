@@ -561,6 +561,9 @@ export const DEFAULT_PCU_SETTINGS: PcuSettings = {
     autoSyncSheetsEnabled: false,
     autoSyncIntervalMinutes: 5,
     lastAutoSyncAt: null,
+    lockedGoogleEmail: '',
+    sheetsSettingsLocked: false,
+    sheetsLockPin: '',
   },
 };
 

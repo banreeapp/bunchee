@@ -6,6 +6,7 @@ import {
   Download,
   FileJson,
   FileSpreadsheet,
+  Lock,
   Plus,
   RotateCcw,
   Save,
@@ -1147,14 +1148,27 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
           {/* Google Sheets Toggle & 5-Minute Auto-Sync */}
           <section className="rounded-xl border border-slate-200 bg-white p-6">
-            <div className="mb-4">
-              <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
-                <FileSpreadsheet className="h-4 w-4 text-teal-700" />
-                <span>เปิด-ปิดการเชื่อม Google Sheets และบันทึกอัตโนมัติทุก 5 นาที</span>
-              </h2>
-              <p className="mt-1 text-xs text-slate-500">
-                ควบคุมการทำงานของระบบเชื่อมต่อ Google Sheets และกำหนดให้บันทึกลงไฟล์ Sheets ที่เชื่อมไว้โดยอัตโนมัติ
-              </p>
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+                  <FileSpreadsheet className="h-4 w-4 text-teal-700" />
+                  <span>เปิด-ปิดการเชื่อม Google Sheets และบันทึกอัตโนมัติทุก 5 นาที</span>
+                </h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  ควบคุมการทำงานของระบบเชื่อมต่อ Google Sheets และกำหนดให้บันทึกลงไฟล์ Sheets ที่เชื่อมไว้โดยอัตโนมัติ
+                </p>
+              </div>
+              {backupSync.sheetsSettingsLocked && (
+                <div className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900">
+                  <Lock className="h-3.5 w-3.5" />
+                  <span>
+                    ล็อคการตั้งค่าอยู่
+                    {backupSync.lockedGoogleEmail
+                      ? ` (${backupSync.lockedGoogleEmail})`
+                      : ''}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -1164,7 +1178,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     เปิดใช้งานการเชื่อมต่อ Google Sheets
                   </p>
                   <p className="mt-0.5 text-slate-500">
-                    {backupSync.sheetsConnectionEnabled
+                    {backupSync.sheetsSettingsLocked
+                      ? 'ถูกล็อคไว้ — ไปที่เมนู Google Sheets เพื่อปลดล็อคก่อนแก้ไข'
+                      : backupSync.sheetsConnectionEnabled
                       ? 'เปิดอยู่ — สามารถเข้าสู่ระบบ ซิงก์ และนำเข้า Google Sheets ได้'
                       : 'ปิดอยู่ — ระงับการเชื่อมต่อและซิงก์ Google Sheets ชั่วคราว'}
                   </p>
@@ -1173,12 +1189,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   type="button"
                   role="switch"
                   aria-checked={backupSync.sheetsConnectionEnabled}
+                  disabled={backupSync.sheetsSettingsLocked}
                   onClick={() =>
                     onUpdateBackupSync({
                       sheetsConnectionEnabled: !backupSync.sheetsConnectionEnabled,
                     })
                   }
-                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
                     backupSync.sheetsConnectionEnabled
                       ? 'bg-teal-700'
                       : 'bg-slate-300'
@@ -1201,7 +1218,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     {backupSync.autoSyncIntervalMinutes} นาที
                   </p>
                   <p className="mt-0.5 text-slate-500">
-                    {!backupSync.sheetsConnectionEnabled
+                    {backupSync.sheetsSettingsLocked
+                      ? 'ถูกล็อคไว้ — ไปที่เมนู Google Sheets เพื่อปลดล็อคก่อนแก้ไข'
+                      : !backupSync.sheetsConnectionEnabled
                       ? 'ต้องเปิดใช้งานการเชื่อมต่อ Google Sheets ก่อน'
                       : backupSync.autoSyncSheetsEnabled
                       ? `เปิดอยู่ · ซิงก์อัตโนมัติล่าสุด: ${formatThaiDateTime(
@@ -1214,7 +1233,10 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   type="button"
                   role="switch"
                   aria-checked={backupSync.autoSyncSheetsEnabled}
-                  disabled={!backupSync.sheetsConnectionEnabled}
+                  disabled={
+                    !backupSync.sheetsConnectionEnabled ||
+                    backupSync.sheetsSettingsLocked
+                  }
                   onClick={() =>
                     handleToggleAutoSync(!backupSync.autoSyncSheetsEnabled)
                   }

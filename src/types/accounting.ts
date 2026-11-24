@@ -62,6 +62,9 @@ export interface BackupSyncSettings {
   autoSyncSheetsEnabled: boolean;
   autoSyncIntervalMinutes: number;
   lastAutoSyncAt: string | null;
+  lockedGoogleEmail: string;
+  sheetsSettingsLocked: boolean;
+  sheetsLockPin: string;
 }
 
 export interface PcuSettings {

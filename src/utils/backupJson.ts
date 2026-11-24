@@ -46,6 +46,16 @@ export function normalizeBackupSyncSettings(
         ? raw.autoSyncIntervalMinutes
         : defaults.autoSyncIntervalMinutes,
     lastAutoSyncAt: raw?.lastAutoSyncAt ?? defaults.lastAutoSyncAt,
+    lockedGoogleEmail:
+      typeof raw?.lockedGoogleEmail === 'string'
+        ? raw.lockedGoogleEmail.trim()
+        : defaults.lockedGoogleEmail,
+    sheetsSettingsLocked:
+      raw?.sheetsSettingsLocked ?? defaults.sheetsSettingsLocked,
+    sheetsLockPin:
+      typeof raw?.sheetsLockPin === 'string'
+        ? raw.sheetsLockPin
+        : defaults.sheetsLockPin,
   };
 }
 

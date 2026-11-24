@@ -131,6 +131,20 @@ export default function App() {
   useEffect(() => {
     const unsub = initAuth(
       (authedUser, token) => {
+        const cfg = normalizeBackupSyncSettings(
+          latestSettingsRef.current.backupSync
+        );
+        const lockedEmail = cfg.lockedGoogleEmail.trim().toLowerCase();
+        const userEmail = (authedUser.email || '').trim().toLowerCase();
+        if (cfg.sheetsSettingsLocked && lockedEmail && userEmail !== lockedEmail) {
+          void logout();
+          setUser(null);
+          setAccessToken(null);
+          setAuthError(
+            `บัญชี ${authedUser.email || ''} ไม่ตรงกับอีเมลที่ล็อคไว้ (${cfg.lockedGoogleEmail}) กรุณาเข้าสู่ระบบด้วยอีเมลที่กำหนด หรือปลดล็อคการตั้งค่าก่อน`
+          );
+          return;
+        }
         setUser(authedUser);
         setAccessToken(token);
       },
@@ -277,8 +291,24 @@ export default function App() {
   const handleLogin = async () => {
     setIsLoggingIn(true);
     setAuthError('');
+    const lockedEmailRaw = backupSync.lockedGoogleEmail.trim();
+    const lockedEmailLower = lockedEmailRaw.toLowerCase();
     try {
-      const res = await googleSignIn();
+      const res = await googleSignIn(lockedEmailRaw || undefined);
+      const signedInEmail = (res.user.email || '').trim().toLowerCase();
+      if (
+        backupSync.sheetsSettingsLocked &&
+        lockedEmailLower &&
+        signedInEmail !== lockedEmailLower
+      ) {
+        await logout();
+        setUser(null);
+        setAccessToken(null);
+        setAuthError(
+          `บัญชี ${res.user.email || ''} ไม่ตรงกับอีเมลที่ล็อคไว้ (${lockedEmailRaw}) กรุณาเข้าสู่ระบบด้วย ${lockedEmailRaw} หรือปลดล็อคการตั้งค่าก่อน`
+        );
+        return;
+      }
       setUser(res.user);
       setAccessToken(res.accessToken);
     } catch (err: unknown) {

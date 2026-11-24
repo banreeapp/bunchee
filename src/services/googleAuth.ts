@@ -16,13 +16,20 @@ export const WORKSPACE_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
 ];
 
-const provider = new GoogleAuthProvider();
-for (const scope of WORKSPACE_SCOPES) {
-  provider.addScope(scope);
+function buildGoogleProvider(loginHint?: string): GoogleAuthProvider {
+  const provider = new GoogleAuthProvider();
+  for (const scope of WORKSPACE_SCOPES) {
+    provider.addScope(scope);
+  }
+  const params: Record<string, string> = {
+    prompt: 'consent select_account',
+  };
+  if (loginHint && loginHint.trim()) {
+    params.login_hint = loginHint.trim();
+  }
+  provider.setCustomParameters(params);
+  return provider;
 }
-provider.setCustomParameters({
-  prompt: 'consent select_account',
-});
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
@@ -46,12 +53,15 @@ export const initAuth = (
   });
 };
 
-export const googleSignIn = async (): Promise<{
+export const googleSignIn = async (
+  loginHint?: string
+): Promise<{
   user: User;
   accessToken: string;
 }> => {
   try {
     isSigningIn = true;
+    const provider = buildGoogleProvider(loginHint);
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
