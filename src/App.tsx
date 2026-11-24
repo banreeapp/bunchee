@@ -1,13 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { User } from 'firebase/auth';
 import {
+  AlertTriangle,
   BarChart3,
   BookOpen,
+  CheckCircle2,
   Download,
+  ExternalLink,
   FileBarChart2,
   FileSpreadsheet,
+  LayoutDashboard,
+  Lock,
+  Power,
+  RefreshCw,
   Settings,
   Sparkles,
+  WifiOff,
 } from 'lucide-react';
 import {
   DEFAULT_PCU_SETTINGS,
@@ -32,6 +40,7 @@ import {
   getBackupScheduleStatus,
   normalizeBackupSyncSettings,
 } from './utils/backupJson';
+import { DashboardWorkspace } from './components/DashboardWorkspace';
 import { LedgerWorkspace } from './components/LedgerWorkspace';
 import { ReportsWorkspace } from './components/ReportsWorkspace';
 import { SummaryWorkspace } from './components/SummaryWorkspace';
@@ -40,13 +49,20 @@ import { SheetsSyncWorkspace } from './components/SheetsSyncWorkspace';
 import { SettingsWorkspace } from './components/SettingsWorkspace';
 import { BackupReminderModal } from './components/BackupReminderModal';
 
-type AppSection = 'ledger' | 'reports' | 'summary' | 'ai' | 'sheets' | 'settings';
+type AppSection =
+  | 'dashboard'
+  | 'ledger'
+  | 'reports'
+  | 'summary'
+  | 'ai'
+  | 'sheets'
+  | 'settings';
 
 const STORAGE_SETTINGS_KEY = 'pcu_ledger_settings_v1';
 const STORAGE_TXS_KEY = 'pcu_ledger_transactions_v1';
 
 export default function App() {
-  const [activeSection, setActiveSection] = useState<AppSection>('ledger');
+  const [activeSection, setActiveSection] = useState<AppSection>('dashboard');
   const [selectedMonthKey, setSelectedMonthKey] = useState<string>('2026-10');
   const [selectedDate407, setSelectedDate407] = useState<string>('2026-10-01');
 
@@ -421,6 +437,7 @@ export default function App() {
     label: string;
     icon: React.ComponentType<{ className?: string }>;
   }> = [
+    { id: 'dashboard', label: 'ภาพรวมการเงิน', icon: LayoutDashboard },
     { id: 'ledger', label: 'บันทึกรายวัน', icon: BookOpen },
     { id: 'reports', label: 'รายงานการเงิน', icon: FileBarChart2 },
     { id: 'summary', label: 'สรุปรายรับ-รายจ่าย', icon: BarChart3 },
@@ -430,6 +447,7 @@ export default function App() {
   ];
 
   const sectionTitles: Record<AppSection, string> = {
+    dashboard: 'Dashboard ภาพรวมการเงินรายปีงบประมาณ',
     ledger: 'สมุดรายวันรับ - จ่ายเงินบำรุง',
     reports: 'รายงานการเงินมาตรฐาน รพ.สต.',
     summary: 'สรุปรายรับ - รายจ่าย แยกรายวัน รายเดือน และหมวดหมู่',
@@ -477,22 +495,67 @@ export default function App() {
         </nav>
 
         <div className="space-y-3 border-t border-slate-200 p-4 text-xs text-slate-500">
-          <div>
-            <p className="font-medium text-slate-700">
-              {!backupSync.sheetsConnectionEnabled
-                ? 'ปิดการเชื่อม Sheets ชั่วคราว'
+          <button
+            type="button"
+            onClick={() => setActiveSection('sheets')}
+            className={`w-full rounded-lg border p-2.5 text-left transition-colors ${
+              !backupSync.sheetsConnectionEnabled
+                ? 'border-slate-200 bg-slate-50 text-slate-600'
+                : autoSyncStatus === 'error'
+                ? 'border-red-200 bg-red-50 text-red-800'
+                : accessToken && settings.linkedSpreadsheetId
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
                 : accessToken
-                ? backupSync.autoSyncSheetsEnabled
-                  ? `ซิงก์ Sheets อัตโนมัติทุก ${backupSync.autoSyncIntervalMinutes} นาที`
-                  : 'เชื่อมต่อ Google Sheets แล้ว'
-                : 'ยังไม่ได้เชื่อมต่อ Google'}
+                ? 'border-amber-200 bg-amber-50 text-amber-900'
+                : 'border-rose-200 bg-rose-50 text-rose-900'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 font-semibold">
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-xs ${
+                    !backupSync.sheetsConnectionEnabled
+                      ? 'bg-slate-400'
+                      : autoSyncStatus === 'error'
+                      ? 'bg-red-600'
+                      : accessToken && settings.linkedSpreadsheetId
+                      ? 'bg-emerald-600'
+                      : accessToken
+                      ? 'bg-amber-500'
+                      : 'bg-rose-600'
+                  }`}
+                />
+                <span>
+                  {!backupSync.sheetsConnectionEnabled
+                    ? 'Sheets ปิดอยู่'
+                    : autoSyncStatus === 'syncing'
+                    ? 'กำลังซิงก์ Sheets...'
+                    : autoSyncStatus === 'error'
+                    ? 'ซิงก์ Sheets ขัดข้อง'
+                    : accessToken
+                    ? 'เชื่อมต่อ Google แล้ว'
+                    : 'ยังไม่เชื่อมต่อ Google'}
+                </span>
+              </span>
+              {backupSync.sheetsSettingsLocked && (
+                <Lock className="h-3 w-3 shrink-0 text-amber-700" />
+              )}
+            </div>
+            <p className="mt-1 truncate text-[11px] opacity-85">
+              {!backupSync.sheetsConnectionEnabled
+                ? 'บันทึกข้อมูลเฉพาะในเครื่อง'
+                : accessToken
+                ? user?.email || 'เชื่อมต่อแล้ว'
+                : backupSync.lockedGoogleEmail
+                ? `ล็อค: ${backupSync.lockedGoogleEmail}`
+                : 'คลิกเพื่อเชื่อมต่อ Google Sheets'}
             </p>
-            <p className="mt-0.5 truncate">
-              {backupSync.sheetsConnectionEnabled
-                ? settings.linkedSpreadsheetTitle || 'เลือกไฟล์หรือสร้างไฟล์ใหม่'
-                : 'บันทึกข้อมูลเฉพาะในเครื่อง'}
-            </p>
-          </div>
+            {backupSync.sheetsConnectionEnabled && settings.linkedSpreadsheetId && (
+              <p className="mt-0.5 truncate text-[11px] font-medium opacity-90">
+                ไฟล์: {settings.linkedSpreadsheetTitle || settings.linkedSpreadsheetId}
+              </p>
+            )}
+          </button>
 
           <div className="border-t border-slate-100 pt-3">
             <p className="text-[11px] text-slate-500">
@@ -603,7 +666,181 @@ export default function App() {
           </div>
         </header>
 
+        {/* Prominent Global Connection Status Bar */}
+        <div
+          className={`no-print border-b px-6 py-2.5 text-xs ${
+            !backupSync.sheetsConnectionEnabled
+              ? 'border-slate-200 bg-slate-100 text-slate-700'
+              : autoSyncStatus === 'error'
+              ? 'border-red-200 bg-red-50 text-red-900'
+              : accessToken && settings.linkedSpreadsheetId
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+              : accessToken
+              ? 'border-amber-200 bg-amber-50 text-amber-950'
+              : 'border-rose-200 bg-rose-50 text-rose-950'
+          }`}
+        >
+          <div className="mx-auto flex max-w-[1320px] flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              {!backupSync.sheetsConnectionEnabled ? (
+                <>
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
+                    <Power className="h-3.5 w-3.5 text-slate-500" />
+                    <span>สถานะ: ปิดการเชื่อมต่อ Google Sheets ชั่วคราว</span>
+                  </span>
+                  <span className="text-slate-500">
+                    ข้อมูลทั้งหมดจัดเก็บเฉพาะในเครื่อง
+                  </span>
+                </>
+              ) : autoSyncStatus === 'error' ? (
+                <>
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-red-800">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-600" />
+                    <span>สถานะ: ซิงก์ Google Sheets ขัดข้อง</span>
+                  </span>
+                  <span className="truncate text-red-700">
+                    {autoSyncError || 'กรุณาตรวจสอบการเชื่อมต่อหรือเข้าสู่ระบบใหม่'}
+                  </span>
+                </>
+              ) : accessToken && settings.linkedSpreadsheetId ? (
+                <>
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-800">
+                    {autoSyncStatus === 'syncing' ? (
+                      <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin text-emerald-700" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                    )}
+                    <span>
+                      {autoSyncStatus === 'syncing'
+                        ? 'กำลังซิงก์ข้อมูลขึ้น Google Sheets...'
+                        : 'เชื่อมต่อ Google Sheets พร้อมใช้งาน'}
+                    </span>
+                  </span>
+                  <span className="text-emerald-800/80">|</span>
+                  <span className="truncate font-medium">
+                    บัญชี: <span className="font-semibold">{user?.email}</span>
+                  </span>
+                  <span className="text-emerald-800/80">|</span>
+                  <span className="truncate font-medium">
+                    ไฟล์:{' '}
+                    <span className="font-semibold">
+                      {settings.linkedSpreadsheetTitle ||
+                        settings.linkedSpreadsheetId}
+                    </span>
+                  </span>
+                  {backupSync.autoSyncSheetsEnabled && (
+                    <>
+                      <span className="text-emerald-800/80">|</span>
+                      <span className="font-mono-num tabular-nums text-emerald-800">
+                        ซิงก์อัตโนมัติทุก {backupSync.autoSyncIntervalMinutes} นาที
+                        {nextAutoSyncSeconds !== null
+                          ? ` (อีก ${Math.floor(
+                              nextAutoSyncSeconds / 60
+                            )}:${String(nextAutoSyncSeconds % 60).padStart(
+                              2,
+                              '0'
+                            )})`
+                          : ''}
+                      </span>
+                    </>
+                  )}
+                </>
+              ) : accessToken ? (
+                <>
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-amber-900">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                    <span>เชื่อมต่อบัญชี Google แล้ว แต่ยังไม่ได้ผูกไฟล์ Sheet</span>
+                  </span>
+                  <span className="text-amber-800">|</span>
+                  <span className="truncate font-medium">
+                    บัญชี: <span className="font-semibold">{user?.email}</span>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-rose-800">
+                    <WifiOff className="h-3.5 w-3.5 shrink-0 text-rose-600" />
+                    <span>สถานะ: ยังไม่ได้เชื่อมต่อบัญชี Google Sheets</span>
+                  </span>
+                  {backupSync.lockedGoogleEmail && (
+                    <>
+                      <span className="text-rose-300">|</span>
+                      <span className="truncate font-medium text-rose-900">
+                        อีเมลที่ล็อคไว้: {backupSync.lockedGoogleEmail}
+                      </span>
+                    </>
+                  )}
+                  {settings.linkedSpreadsheetId && (
+                    <>
+                      <span className="text-rose-300">|</span>
+                      <span className="truncate font-medium text-rose-900">
+                        ไฟล์ที่ผูกไว้:{' '}
+                        {settings.linkedSpreadsheetTitle ||
+                          settings.linkedSpreadsheetId}
+                      </span>
+                    </>
+                  )}
+                </>
+              )}
+
+              {backupSync.sheetsSettingsLocked && (
+                <span className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-100/80 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
+                  <Lock className="h-3 w-3" />
+                  <span>ล็อคการตั้งค่า</span>
+                </span>
+              )}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              {backupSync.sheetsConnectionEnabled &&
+                settings.linkedSpreadsheetId && (
+                  <a
+                    href={`https://docs.google.com/spreadsheets/d/${settings.linkedSpreadsheetId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-current/20 bg-white/80 px-2.5 py-1 text-[11px] font-semibold hover:bg-white"
+                  >
+                    <span>เปิดไฟล์ Sheet</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+
+              {backupSync.sheetsConnectionEnabled && !accessToken ? (
+                <button
+                  type="button"
+                  disabled={isLoggingIn}
+                  onClick={handleLogin}
+                  className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-rose-700 px-3 py-1 text-[11px] font-semibold text-white hover:bg-rose-800 disabled:opacity-50"
+                >
+                  <FileSpreadsheet className="h-3 w-3" />
+                  <span>
+                    {isLoggingIn ? 'กำลังเชื่อมต่อ...' : 'เข้าสู่ระบบ Google ทันที'}
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveSection('sheets')}
+                  className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-current/20 bg-white/80 px-2.5 py-1 text-[11px] font-semibold hover:bg-white"
+                >
+                  <span>จัดการเชื่อมต่อ</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
         <main className="mx-auto w-full max-w-[1320px] flex-1 p-5 lg:p-6">
+          {activeSection === 'dashboard' && (
+            <DashboardWorkspace
+              settings={settings}
+              transactions={transactions}
+              selectedMonthKey={selectedMonthKey}
+              onChangeMonth={setSelectedMonthKey}
+              onNavigate={setActiveSection}
+            />
+          )}
+
           {activeSection === 'ledger' && (
             <LedgerWorkspace
               settings={settings}

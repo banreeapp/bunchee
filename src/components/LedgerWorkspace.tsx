@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeftRight,
+  Calculator,
   CheckCircle2,
   Edit3,
   Plus,
@@ -34,6 +35,57 @@ import {
   sortTransactionsChronological,
 } from '../utils/accountingMath';
 import { ConfirmModal } from './ConfirmModal';
+
+type WhtRateOption = 0 | 1 | 3;
+
+interface WhtPreset {
+  rate: WhtRateOption;
+  hint: string;
+}
+
+function roundCurrency2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function getWhtPresetForCategory(categoryCode: string): WhtPreset {
+  switch (categoryCode) {
+    case 'EXP_06':
+      return {
+        rate: 3,
+        hint: 'ค่าซ่อมแซม / จ้างทำของ — อัตรามาตรฐาน 3%',
+      };
+    case 'EXP_07':
+      return {
+        rate: 3,
+        hint: 'ค่าจ้างเหมาบริการ — อัตรามาตรฐาน 3%',
+      };
+    case 'EXP_08':
+      return {
+        rate: 1,
+        hint: 'ซื้อวัสดุ (นิติบุคคล / ตามเกณฑ์ส่วนราชการ) — อัตรา 1%',
+      };
+    case 'EXP_10':
+      return {
+        rate: 1,
+        hint: 'ซื้อครุภัณฑ์ (นิติบุคคล / ตามเกณฑ์ส่วนราชการ) — อัตรา 1%',
+      };
+    case 'EXP_05':
+      return {
+        rate: 1,
+        hint: 'ค่าใช้จ่ายโครงการ (ซื้อวัสดุ 1% / จ้างบริการ 3%)',
+      };
+    case 'EXP_09':
+      return {
+        rate: 1,
+        hint: 'ค่าสาธารณูปโภค / บริการสื่อสาร (1% กรณีเข้าเกณฑ์หักภาษี)',
+      };
+    default:
+      return {
+        rate: 0,
+        hint: 'หมวดรายจ่ายนี้โดยทั่วไปไม่หัก ณ ที่จ่าย (เลือก 1% หรือ 3% ได้หากเข้าเกณฑ์)',
+      };
+  }
+}
 
 interface LedgerWorkspaceProps {
   settings: PcuSettings;
@@ -82,6 +134,12 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
   const [editingTx, setEditingTx] = useState<LedgerTransaction | null>(null);
   const [formNotice, setFormNotice] = useState<string>('');
 
+  // Withholding Tax Calculator state (for Expense entries)
+  const [whtRate, setWhtRate] = useState<WhtRateOption>(0);
+  const [whtIncludesVat, setWhtIncludesVat] = useState<boolean>(false);
+  const [autoRecordWhtIncome, setAutoRecordWhtIncome] =
+    useState<boolean>(false);
+
   // Table Filters
   const [filterType, setFilterType] = useState<'all' | TransactionType>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -94,6 +152,38 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
     (c) => c.code === categoryCode
   );
 
+  const whtPreset = useMemo(
+    () => getWhtPresetForCategory(categoryCode),
+    [categoryCode]
+  );
+
+  const whtCalculation = useMemo(() => {
+    const gross = Number(amount);
+    const validGross = !Number.isNaN(gross) && gross > 0 ? roundCurrency2(gross) : 0;
+    const taxBase = whtIncludesVat
+      ? roundCurrency2(validGross / 1.07)
+      : validGross;
+    const vatAmount = whtIncludesVat
+      ? roundCurrency2(validGross - taxBase)
+      : 0;
+    const tax1 = roundCurrency2((taxBase * 1) / 100);
+    const tax3 = roundCurrency2((taxBase * 3) / 100);
+    const whtAmount =
+      whtRate === 1 ? tax1 : whtRate === 3 ? tax3 : 0;
+    const netTransfer = roundCurrency2(validGross - whtAmount);
+    return {
+      gross: validGross,
+      taxBase,
+      vatAmount,
+      whtAmount,
+      netTransfer,
+      netAt1: roundCurrency2(validGross - tax1),
+      netAt3: roundCurrency2(validGross - tax3),
+      tax1,
+      tax3,
+    };
+  }, [amount, whtRate, whtIncludesVat]);
+
   const handleTypeSwitch = (nextType: TransactionType) => {
     setTxType(nextType);
     if (nextType === 'income') {
@@ -101,17 +191,22 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
       setSubCategoryCode('INC_01_01');
       setAccrualCode('');
       setIsLowValueEquipment(false);
+      setWhtRate(0);
+      setAutoRecordWhtIncome(false);
       if (!editingTx) setDocNo(`${settings.docPrefixes.receiptBookMain} / `);
     } else if (nextType === 'expense') {
       setCategoryCode('EXP_09');
       setSubCategoryCode('EXP_09_01');
       setAccrualCode('ACC_EXP_05_01');
+      setWhtRate(getWhtPresetForCategory('EXP_09').rate);
       if (!editingTx) setDocNo(settings.docPrefixes.expensePrefix);
     } else {
       setCategoryCode('TRANSFER');
       setSubCategoryCode('');
       setAccrualCode('');
       setIsLowValueEquipment(false);
+      setWhtRate(0);
+      setAutoRecordWhtIncome(false);
       if (!editingTx) setDocNo('');
     }
   };
@@ -137,6 +232,7 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
         createdAt: '',
       });
       setAccrualCode(suggested);
+      setWhtRate(getWhtPresetForCategory(nextCatCode).rate);
     }
   };
 
@@ -207,6 +303,10 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
     setChequeNo('');
     setProjectId('');
     setIsLowValueEquipment(false);
+    setAutoRecordWhtIncome(false);
+    setWhtRate(
+      txType === 'expense' ? getWhtPresetForCategory(categoryCode).rate : 0
+    );
     setDocNo(
       txType === 'income'
         ? `${settings.docPrefixes.receiptBookMain} / `
@@ -236,6 +336,15 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
       (p) => p.id === projectId
     );
 
+    const whtNote =
+      txType === 'expense' && whtRate > 0 && whtCalculation.whtAmount > 0
+        ? `หัก ณ ที่จ่าย ${whtRate}%${
+            whtIncludesVat ? ' (ฐานก่อน VAT)' : ''
+          }: ${formatMoney(whtCalculation.whtAmount)} บ. · โอนสุทธิ ${formatMoney(
+            whtCalculation.netTransfer
+          )} บ.`
+        : undefined;
+
     const payload: Omit<LedgerTransaction, 'id' | 'createdAt'> = {
       date,
       type: txType,
@@ -255,6 +364,7 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
       projectId: selectedProject?.id || '',
       projectCode: selectedProject?.shortName || '',
       issuerName: issuerName.trim() || settings.officers.financeOfficer,
+      notes: whtNote,
     };
 
     if (editingTx) {
@@ -265,7 +375,33 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
       setFormNotice('แก้ไขรายการเรียบร้อยแล้ว');
     } else {
       onAddTransaction(payload);
-      setFormNotice('บันทึกรายการลงสมุดรายวันเรียบร้อยแล้ว');
+      if (
+        txType === 'expense' &&
+        autoRecordWhtIncome &&
+        whtRate > 0 &&
+        whtCalculation.whtAmount > 0
+      ) {
+        onAddTransaction({
+          date,
+          type: 'income',
+          docNo: docNo.trim(),
+          categoryCode: 'INC_08',
+          subCategoryCode: '',
+          description: `รับฝากภาษีหัก ณ ที่จ่าย ${whtRate}% (${finalDescription})`,
+          amount: whtCalculation.whtAmount,
+          paymentMethod: paymentMethod === 'cash' ? 'cash' : 'bank',
+          bankAccountId,
+          issuerName: issuerName.trim() || settings.officers.financeOfficer,
+          notes: `อ้างอิงจากยอดเบิก ${formatMoney(numericAmount)} บ.`,
+        });
+        setFormNotice(
+          `บันทึกรายจ่ายและรายรับฝากภาษีหัก ณ ที่จ่าย (${formatMoney(
+            whtCalculation.whtAmount
+          )} บ.) เรียบร้อยแล้ว`
+        );
+      } else {
+        setFormNotice('บันทึกรายการลงสมุดรายวันเรียบร้อยแล้ว');
+      }
     }
     resetForm();
     setTimeout(() => setFormNotice(''), 3500);
@@ -288,6 +424,16 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
     setTransferDirection(tx.transferDirection || 'cash_to_bank');
     setProjectId(tx.projectId || '');
     setIssuerName(tx.issuerName);
+    setAutoRecordWhtIncome(false);
+    if (tx.type === 'expense') {
+      if (tx.notes?.includes('3%')) setWhtRate(3);
+      else if (tx.notes?.includes('1%')) setWhtRate(1);
+      else setWhtRate(getWhtPresetForCategory(tx.categoryCode).rate);
+      setWhtIncludesVat(Boolean(tx.notes?.includes('VAT')));
+    } else {
+      setWhtRate(0);
+      setWhtIncludesVat(false);
+    }
   };
 
   return (
@@ -729,6 +875,140 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
             </div>
           )}
 
+          {/* Withholding Tax Calculator (1% / 3%) for Expense Entries */}
+          {txType === 'expense' && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 md:col-span-12">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-teal-100 text-teal-800">
+                    <Calculator className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-900">
+                      คำนวณภาษีหัก ณ ที่จ่าย (Withholding Tax) เพื่อเช็กยอดโอนสุทธิ
+                    </h3>
+                    <p className="mt-0.5 text-[11px] text-slate-600">
+                      {whtPreset.hint}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
+                    {(
+                      [
+                        { rate: 0, label: 'ไม่หัก (0%)' },
+                        { rate: 1, label: 'หัก 1% (วัสดุ/ครุภัณฑ์)' },
+                        { rate: 3, label: 'หัก 3% (จ้างเหมา/ซ่อม)' },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.rate}
+                        type="button"
+                        onClick={() => setWhtRate(opt.rate)}
+                        className={`whitespace-nowrap rounded-md px-3 py-1 font-semibold transition-colors ${
+                          whtRate === opt.rate
+                            ? opt.rate === 0
+                              ? 'bg-slate-800 text-white'
+                              : 'bg-teal-700 text-white'
+                            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={whtIncludesVat}
+                      onChange={(e) => setWhtIncludesVat(e.target.checked)}
+                      className="h-3.5 w-3.5 accent-teal-700"
+                    />
+                    <span>ยอดเบิกรวม VAT 7% (คิดภาษีจากยอดก่อน VAT)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <div className="rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
+                  <p className="text-[11px] font-medium text-slate-500">
+                    ยอดเบิกจ่ายเต็ม (ตามใบสำคัญ)
+                  </p>
+                  <p className="font-mono-num mt-0.5 text-base font-semibold text-slate-900 tabular-nums">
+                    {formatMoney(whtCalculation.gross)} บาท
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 bg-white px-3.5 py-2.5">
+                  <p className="text-[11px] font-medium text-slate-500">
+                    ฐานคำนวณภาษี{whtIncludesVat ? ' (ก่อน VAT 7%)' : ''}
+                  </p>
+                  <p className="font-mono-num mt-0.5 text-base font-semibold text-slate-800 tabular-nums">
+                    {formatMoney(whtCalculation.taxBase)} บาท
+                  </p>
+                  {whtIncludesVat && whtCalculation.gross > 0 && (
+                    <p className="font-mono-num text-[10px] text-slate-500 tabular-nums">
+                      VAT 7%: {formatMoney(whtCalculation.vatAmount)} บาท
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3.5 py-2.5">
+                  <p className="text-[11px] font-medium text-amber-900">
+                    ภาษีหัก ณ ที่จ่าย ({whtRate}%)
+                  </p>
+                  <p className="font-mono-num mt-0.5 text-base font-bold text-amber-800 tabular-nums">
+                    {whtCalculation.whtAmount > 0 ? '-' : ''}
+                    {formatMoney(whtCalculation.whtAmount)} บาท
+                  </p>
+                  {whtCalculation.gross > 0 && whtRate === 0 && (
+                    <p className="font-mono-num text-[10px] text-slate-500 tabular-nums">
+                      เทียบ: 1%={formatMoney(whtCalculation.tax1)} · 3%=
+                      {formatMoney(whtCalculation.tax3)}
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-teal-300 bg-teal-50 px-3.5 py-2.5">
+                  <p className="text-[11px] font-semibold text-teal-900">
+                    ยอดเงินโอนสุทธิ (จ่ายจริง)
+                  </p>
+                  <p className="font-mono-num mt-0.5 text-lg font-bold text-teal-800 tabular-nums">
+                    {formatMoney(whtCalculation.netTransfer)} บาท
+                  </p>
+                  {whtCalculation.gross > 0 && whtRate === 0 && (
+                    <p className="font-mono-num text-[10px] text-teal-700 tabular-nums">
+                      โอนสุทธิ 1%={formatMoney(whtCalculation.netAt1)} · 3%=
+                      {formatMoney(whtCalculation.netAt3)}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {!editingTx && whtRate > 0 && whtCalculation.whtAmount > 0 && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2.5">
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={autoRecordWhtIncome}
+                      onChange={(e) => setAutoRecordWhtIncome(e.target.checked)}
+                      className="h-4 w-4 accent-teal-700"
+                    />
+                    <span>
+                      บันทึกรายรับ &ldquo;8. เงินรับฝากภาษี หัก ณ ที่จ่าย&rdquo; จำนวน{' '}
+                      <strong className="font-mono-num text-amber-800 tabular-nums">
+                        {formatMoney(whtCalculation.whtAmount)} บาท
+                      </strong>{' '}
+                      ลงสมุดรายวันคู่กันอัตโนมัติ (เพื่อให้ยอดเงินฝากคงเหลือตรงกับยอดโอนสุทธิ)
+                    </span>
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-3 pt-1 md:col-span-12">
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span>ผู้บันทึก/ผู้ออกใบเสร็จ:</span>
@@ -887,7 +1167,12 @@ export const LedgerWorkspace: React.FC<LedgerWorkspaceProps> = ({
                         {tx.projectCode ? ` · ${tx.projectCode}` : ''}
                       </td>
                       <td className="px-4 py-2.5 font-medium text-slate-900">
-                        {tx.description}
+                        <div>{tx.description}</div>
+                        {tx.notes && (
+                          <div className="font-mono-num mt-0.5 text-[11px] font-normal text-amber-800">
+                            {tx.notes}
+                          </div>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">
                         {payLabel} · ธ.{bank?.order || 1}
