@@ -27,6 +27,7 @@ import {
   LedgerTransaction,
   PaymentMethod,
   PcuSettings,
+  QuarterlyBudgetTarget,
 } from '../types/accounting';
 import {
   computeAccountBalances,
@@ -37,12 +38,14 @@ import {
   getOpeningTotalAllAccounts,
   ProjectScopeFilter,
 } from '../utils/accountingMath';
+import { QuarterlyBudgetChart } from './QuarterlyBudgetChart';
 
 interface DashboardWorkspaceProps {
   settings: PcuSettings;
   transactions: LedgerTransaction[];
   selectedMonthKey: string;
   onChangeMonth: (monthKey: string) => void;
+  onUpdateQuarterlyBudgets: (nextBudgets: QuarterlyBudgetTarget[]) => void;
   onNavigate: (
     section: 'ledger' | 'reports' | 'summary' | 'sheets' | 'settings'
   ) => void;
@@ -150,6 +153,7 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
   transactions,
   selectedMonthKey,
   onChangeMonth,
+  onUpdateQuarterlyBudgets,
   onNavigate,
 }) => {
   const [projectScope, setProjectScope] = useState<ProjectScopeFilter>('all');
@@ -740,6 +744,15 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
           })}
         </div>
       </section>
+
+      {/* Quarterly Cumulative Income & Expense vs Budget Target BarChart */}
+      <QuarterlyBudgetChart
+        settings={settings}
+        filteredTransactions={filteredTxs}
+        selectedMonthKey={selectedMonthKey}
+        onSelectMonth={onChangeMonth}
+        onUpdateQuarterlyBudgets={onUpdateQuarterlyBudgets}
+      />
 
       {/* Interactive Drill-Down Row */}
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-12">

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Calendar,
   CheckCircle2,
   Clock,
   Download,
@@ -14,6 +15,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
+import { FISCAL_MONTHS } from '../data/pcuCatalog';
 import {
   BackupSyncSettings,
   BankAccount,
@@ -25,9 +27,11 @@ import {
 import {
   computeProjectBalances,
   formatMoney,
+  getMonthKey,
   getOpeningTotalAllAccounts,
 } from '../utils/accountingMath';
 import {
+  downloadMonthlyBackupJson,
   formatThaiDateTime,
   getBackupScheduleStatus,
   normalizeBackupSyncSettings,
@@ -39,6 +43,7 @@ import { ConfirmModal } from './ConfirmModal';
 interface SettingsWorkspaceProps {
   settings: PcuSettings;
   transactions: LedgerTransaction[];
+  selectedMonthKey: string;
   hasUnsavedChanges: boolean;
   onSaveSettings: (next: PcuSettings) => void;
   onResetDemoData: () => void;
@@ -56,6 +61,7 @@ type SettingsTab = 'general' | 'projects' | 'backup';
 export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   settings,
   transactions,
+  selectedMonthKey,
   hasUnsavedChanges,
   onSaveSettings,
   onResetDemoData,
@@ -71,12 +77,17 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
   // JSON Backup & Restore state
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [exportMonthKey, setExportMonthKey] = useState(selectedMonthKey);
   const [backupNotice, setBackupNotice] = useState('');
   const [restoreError, setRestoreError] = useState('');
   const [pendingRestore, setPendingRestore] = useState<PcuBackupPayload | null>(
     null
   );
   const [confirmEnableAutoSync, setConfirmEnableAutoSync] = useState(false);
+
+  useEffect(() => {
+    setExportMonthKey(selectedMonthKey);
+  }, [selectedMonthKey]);
 
   const prevSettingsRef = useRef(settings);
   useEffect(() => {
@@ -117,11 +128,44 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     setTimeout(() => setSavedNotice(false), 3000);
   };
 
+  const exportMonthInfo = useMemo(
+    () =>
+      FISCAL_MONTHS.find((m) => m.key === exportMonthKey) || FISCAL_MONTHS[0],
+    [exportMonthKey]
+  );
+
+  const exportMonthStats = useMemo(() => {
+    const monthTxs = transactions.filter(
+      (t) => getMonthKey(t.date) === exportMonthKey
+    );
+    const income = monthTxs
+      .filter((t) => t.type === 'income')
+      .reduce((s, t) => s + t.amount, 0);
+    const expense = monthTxs
+      .filter((t) => t.type === 'expense')
+      .reduce((s, t) => s + t.amount, 0);
+    return { count: monthTxs.length, income, expense };
+  }, [transactions, exportMonthKey]);
+
   const handleBackupClick = () => {
     const result = onBackupJsonNow();
     setRestoreError('');
-    setBackupNotice(`ดาวน์โหลดไฟล์สำรอง "${result.fileName}" เรียบร้อยแล้ว`);
+    setBackupNotice(`ดาวน์โหลดไฟล์สำรองทั้งหมด "${result.fileName}" เรียบร้อยแล้ว`);
     setTimeout(() => setBackupNotice(''), 5000);
+  };
+
+  const handleMonthlyBackupClick = () => {
+    const result = downloadMonthlyBackupJson(
+      settings,
+      transactions,
+      exportMonthKey,
+      exportMonthInfo.label
+    );
+    setRestoreError('');
+    setBackupNotice(
+      `Export ข้อมูลเฉพาะเดือน${exportMonthInfo.label} (${result.count} รายการ) เป็นไฟล์ "${result.fileName}" เรียบร้อยแล้ว`
+    );
+    setTimeout(() => setBackupNotice(''), 6000);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1002,50 +1046,97 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <h3 className="text-sm font-semibold text-slate-900">
-                  สำรองข้อมูลเป็นไฟล์ JSON
-                </h3>
-                <p className="mt-1 text-xs text-slate-500">
-                  ข้อมูลปัจจุบัน: {transactions.length} รายการ ·{' '}
-                  {(settings.projects || []).length} โครงการ/ทะเบียนคุม{' '}
-                  {hasUnsavedChanges
-                    ? '(มีการแก้ไขที่ยังไม่ได้สำรอง)'
-                    : '(ตรงกับไฟล์สำรองล่าสุด)'}
-                </p>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              {/* Full System JSON Backup */}
+              <div className="flex flex-col justify-between rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    1. สำรองข้อมูลทั้งหมด (ทั้งปีงบประมาณ)
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    ข้อมูลทั้งหมด: {transactions.length} รายการ ·{' '}
+                    {(settings.projects || []).length} โครงการ/ทะเบียนคุม{' '}
+                    {hasUnsavedChanges
+                      ? '(มีการแก้ไขที่ยังไม่ได้สำรอง)'
+                      : '(ตรงกับไฟล์สำรองล่าสุด)'}
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={handleBackupClick}
                   className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-teal-700 px-4 py-2.5 text-xs font-semibold text-white hover:bg-teal-800"
                 >
                   <Download className="h-4 w-4" />
-                  <span>ดาวน์โหลดไฟล์สำรอง (.json) ทันที</span>
+                  <span>ดาวน์โหลดสำรองทั้งหมด (.json)</span>
                 </button>
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <h3 className="text-sm font-semibold text-slate-900">
-                  นำเข้าไฟล์ JSON เพื่อกู้คืนข้อมูล
-                </h3>
-                <p className="mt-1 text-xs text-slate-500">
-                  เลือกไฟล์สำรอง .json ที่เคยบันทึกไว้ ระบบจะตรวจสอบความถูกต้องและแสดงสรุปให้ยืนยันก่อนนำเข้า
-                </p>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
+              {/* Monthly Archive JSON Export */}
+              <div className="flex flex-col justify-between rounded-lg border border-sky-200 bg-sky-50/50 p-4">
+                <div>
+                  <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+                    <Calendar className="h-4 w-4 text-sky-700" />
+                    <span>2. Export เฉพาะรายเดือน (ประกอบงบเดือน)</span>
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-600">
+                    เลือกเดือนเพื่อส่งออกเฉพาะรายการในเดือนนั้นเก็บเป็นเอกสารแนบงบประจำเดือน
+                  </p>
+                  <div className="mt-2.5 space-y-1.5">
+                    <select
+                      value={exportMonthKey}
+                      onChange={(e) => setExportMonthKey(e.target.value)}
+                      className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 focus:border-teal-600 focus:outline-none"
+                    >
+                      {FISCAL_MONTHS.map((m) => (
+                        <option key={m.key} value={m.key}>
+                          เดือน{m.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="font-mono-num text-[11px] text-slate-600 tabular-nums">
+                      พบ {exportMonthStats.count} รายการ · รับ{' '}
+                      {formatMoney(exportMonthStats.income)} · จ่าย{' '}
+                      {formatMoney(exportMonthStats.expense)} บ.
+                    </p>
+                  </div>
+                </div>
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                  onClick={handleMonthlyBackupClick}
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-sky-700 px-4 py-2.5 text-xs font-semibold text-white hover:bg-sky-800"
                 >
-                  <Upload className="h-4 w-4" />
-                  <span>เลือกไฟล์ JSON เพื่อนำกลับมาใช้</span>
+                  <Download className="h-4 w-4" />
+                  <span>Export JSON เดือน{exportMonthInfo.shortLabel}</span>
                 </button>
+              </div>
+
+              {/* Import / Restore JSON */}
+              <div className="flex flex-col justify-between rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    3. นำเข้าไฟล์ JSON เพื่อกู้คืนข้อมูล
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    รองรับทั้งไฟล์สำรองทั้งหมด และไฟล์เฉพาะรายเดือน (หากเป็นไฟล์รายเดือน ระบบจะอัปเดตเฉพาะเดือนนั้นให้โดยไม่ลบเดือนอื่น)
+                  </p>
+                </div>
+                <div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                  >
+                    <Upload className="h-4 w-4" />
+                    <span>เลือกไฟล์ JSON เพื่อนำกลับมาใช้</span>
+                  </button>
+                </div>
               </div>
             </div>
           </section>
@@ -1277,17 +1368,39 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
       <ConfirmModal
         open={Boolean(pendingRestore)}
-        title="ยืนยันการนำเข้าข้อมูลจากไฟล์ JSON"
-        description={`ระบบตรวจสอบไฟล์สำรองเรียบร้อยแล้ว ข้อมูลปัจจุบันในเครื่องจะถูกแทนที่ด้วยข้อมูลจากไฟล์สำรองของ "${
-          pendingRestore?.unitName || ''
-        }"`}
+        title={
+          pendingRestore?.exportScope === 'monthly' && pendingRestore.monthKey
+            ? `ยืนยันการนำเข้าข้อมูลเฉพาะเดือน${
+                pendingRestore.monthLabel || pendingRestore.monthKey
+              }`
+            : 'ยืนยันการนำเข้าข้อมูลจากไฟล์ JSON'
+        }
+        description={
+          pendingRestore?.exportScope === 'monthly' && pendingRestore.monthKey
+            ? `ตรวจพบว่าเป็นไฟล์ข้อมูลเฉพาะรายเดือนของ "${
+                pendingRestore.unitName || ''
+              }" ระบบจะแทนที่รายการเฉพาะเดือน${
+                pendingRestore.monthLabel || pendingRestore.monthKey
+              } โดยยังคงข้อมูลเดือนอื่น ๆ ในเครื่องไว้ตามเดิม`
+            : `ระบบตรวจสอบไฟล์สำรองเรียบร้อยแล้ว ข้อมูลปัจจุบันในเครื่องจะถูกแทนที่ด้วยข้อมูลจากไฟล์สำรองของ "${
+                pendingRestore?.unitName || ''
+              }"`
+        }
         details={
           pendingRestore
             ? [
+                `ประเภทไฟล์: ${
+                  pendingRestore.exportScope === 'monthly' &&
+                  pendingRestore.monthKey
+                    ? `ข้อมูลเฉพาะเดือน${
+                        pendingRestore.monthLabel || pendingRestore.monthKey
+                      }`
+                    : 'ไฟล์สำรองทั้งหมด (Full Backup)'
+                }`,
                 `ปีงบประมาณ: พ.ศ. ${pendingRestore.fiscalYearBE}`,
-                `จำนวนรายการในสมุดรายวัน: ${pendingRestore.transactionCount} รายการ`,
+                `จำนวนรายการในไฟล์: ${pendingRestore.transactionCount} รายการ`,
                 `จำนวนโครงการ / 402 / 404: ${pendingRestore.projectCount} รายการ`,
-                `วันที่สำรองไฟล์: ${formatThaiDateTime(
+                `วันที่ส่งออกไฟล์: ${formatThaiDateTime(
                   pendingRestore.exportedAt
                 )}`,
               ]
@@ -1298,13 +1411,32 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
         onCancel={() => setPendingRestore(null)}
         onConfirm={() => {
           if (pendingRestore) {
-            onRestoreJsonBackup(
-              pendingRestore.settings,
-              pendingRestore.transactions
-            );
-            setBackupNotice(
-              `นำเข้าข้อมูลจากไฟล์สำรองสำเร็จ (${pendingRestore.transactionCount} รายการ)`
-            );
+            if (
+              pendingRestore.exportScope === 'monthly' &&
+              pendingRestore.monthKey
+            ) {
+              const targetMonth = pendingRestore.monthKey;
+              const mergedTxs = [
+                ...transactions.filter(
+                  (t) => getMonthKey(t.date) !== targetMonth
+                ),
+                ...pendingRestore.transactions,
+              ];
+              onRestoreJsonBackup(settings, mergedTxs);
+              setBackupNotice(
+                `นำเข้าข้อมูลเฉพาะเดือน${
+                  pendingRestore.monthLabel || targetMonth
+                } สำเร็จ (${pendingRestore.transactionCount} รายการ)`
+              );
+            } else {
+              onRestoreJsonBackup(
+                pendingRestore.settings,
+                pendingRestore.transactions
+              );
+              setBackupNotice(
+                `นำเข้าข้อมูลจากไฟล์สำรองสำเร็จ (${pendingRestore.transactionCount} รายการ)`
+              );
+            }
             setPendingRestore(null);
           }
         }}

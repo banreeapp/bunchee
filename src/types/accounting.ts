@@ -67,6 +67,12 @@ export interface BackupSyncSettings {
   sheetsLockPin: string;
 }
 
+export interface QuarterlyBudgetTarget {
+  quarter: 1 | 2 | 3 | 4;
+  incomeTarget: number;
+  expenseTarget: number;
+}
+
 export interface PcuSettings {
   unitName: string;
   address: string;
@@ -82,6 +88,7 @@ export interface PcuSettings {
   linkedSpreadsheetId: string;
   linkedSpreadsheetTitle: string;
   backupSync?: BackupSyncSettings;
+  quarterlyBudgets?: QuarterlyBudgetTarget[];
 }
 
 export interface SubCategoryItem {

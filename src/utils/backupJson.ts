@@ -5,9 +5,20 @@ import {
   PcuSettings,
 } from '../types/accounting';
 
+export interface PcuMonthlySummaryMeta {
+  totalIncome: number;
+  totalExpense: number;
+  net: number;
+  transferCount: number;
+}
+
 export interface PcuBackupPayload {
   app: 'PCU Ledger';
   schemaVersion: number;
+  exportScope?: 'full' | 'monthly';
+  monthKey?: string;
+  monthLabel?: string;
+  monthlySummary?: PcuMonthlySummaryMeta;
   exportedAt: string;
   unitName: string;
   fiscalYearBE: number;
@@ -152,6 +163,78 @@ export function downloadBackupJson(
   return { exportedAt, fileName };
 }
 
+export function buildMonthlyBackupPayload(
+  settings: PcuSettings,
+  transactions: LedgerTransaction[],
+  monthKey: string,
+  monthLabel: string,
+  exportedAt: string = new Date().toISOString()
+): PcuBackupPayload {
+  const monthTxs = transactions
+    .filter((t) => t.date.slice(0, 7) === monthKey)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
+
+  const totalIncome = monthTxs
+    .filter((t) => t.type === 'income')
+    .reduce((sum, t) => sum + t.amount, 0);
+  const totalExpense = monthTxs
+    .filter((t) => t.type === 'expense')
+    .reduce((sum, t) => sum + t.amount, 0);
+  const transferCount = monthTxs.filter((t) => t.type === 'transfer').length;
+
+  return {
+    app: 'PCU Ledger',
+    schemaVersion: 1,
+    exportScope: 'monthly',
+    monthKey,
+    monthLabel,
+    monthlySummary: {
+      totalIncome,
+      totalExpense,
+      net: totalIncome - totalExpense,
+      transferCount,
+    },
+    exportedAt,
+    unitName: settings.unitName,
+    fiscalYearBE: settings.fiscalYearBE,
+    transactionCount: monthTxs.length,
+    projectCount: (settings.projects || []).length,
+    settings,
+    transactions: monthTxs,
+  };
+}
+
+export function downloadMonthlyBackupJson(
+  settings: PcuSettings,
+  transactions: LedgerTransaction[],
+  monthKey: string,
+  monthLabel: string
+): { exportedAt: string; fileName: string; count: number } {
+  const exportedAt = new Date().toISOString();
+  const payload = buildMonthlyBackupPayload(
+    settings,
+    transactions,
+    monthKey,
+    monthLabel,
+    exportedAt
+  );
+  const fileName = `pcu-ledger-monthly-${settings.fiscalYearBE}-${monthKey}.json`;
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+
+  return { exportedAt, fileName, count: payload.transactionCount };
+}
+
 export function parseAndValidateBackupJson(rawText: string): PcuBackupPayload {
   let parsed: unknown;
   try {
@@ -245,9 +328,23 @@ export function parseAndValidateBackupJson(rawText: string): PcuBackupPayload {
     backupSync: normalizeBackupSyncSettings(rawSettings.backupSync),
   };
 
+  const exportScope =
+    obj.exportScope === 'monthly' ? 'monthly' : 'full';
+  const monthKey =
+    typeof obj.monthKey === 'string' && obj.monthKey.trim()
+      ? obj.monthKey.trim()
+      : undefined;
+  const monthLabel =
+    typeof obj.monthLabel === 'string' && obj.monthLabel.trim()
+      ? obj.monthLabel.trim()
+      : undefined;
+
   return {
     app: 'PCU Ledger',
     schemaVersion: Number(obj.schemaVersion) || 1,
+    exportScope,
+    monthKey,
+    monthLabel,
     exportedAt: String(obj.exportedAt || new Date().toISOString()),
     unitName: mergedSettings.unitName,
     fiscalYearBE: mergedSettings.fiscalYearBE,

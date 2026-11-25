@@ -4,6 +4,7 @@ import {
   LedgerTransaction,
   PcuSettings,
   ProjectItem,
+  QuarterlyBudgetTarget,
 } from '../types/accounting';
 
 // 13 หมวดรายรับเงินบำรุง ตามแบบฟอร์มรายงานการรับ-จ่ายเงินบำรุง รพ.สต. (PCU Money)
@@ -565,7 +566,20 @@ export const DEFAULT_PCU_SETTINGS: PcuSettings = {
     sheetsSettingsLocked: false,
     sheetsLockPin: '',
   },
+  quarterlyBudgets: [
+    { quarter: 1, incomeTarget: 180000, expenseTarget: 150000 },
+    { quarter: 2, incomeTarget: 180000, expenseTarget: 160000 },
+    { quarter: 3, incomeTarget: 200000, expenseTarget: 170000 },
+    { quarter: 4, incomeTarget: 220000, expenseTarget: 190000 },
+  ],
 };
+
+export const DEFAULT_QUARTERLY_BUDGETS: QuarterlyBudgetTarget[] = [
+  { quarter: 1, incomeTarget: 180000, expenseTarget: 150000 },
+  { quarter: 2, incomeTarget: 180000, expenseTarget: 160000 },
+  { quarter: 3, incomeTarget: 200000, expenseTarget: 170000 },
+  { quarter: 4, incomeTarget: 220000, expenseTarget: 190000 },
+];
 
 // ข้อมูลเริ่มต้นเดือนตุลาคม 2569 ตรงตามตัวอย่างรายงานแบบ 401, 404, 407, หน้างบใบสำคัญ และงบเกณฑ์คงค้าง
 export const DEFAULT_TRANSACTIONS: LedgerTransaction[] = [

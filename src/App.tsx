@@ -3,6 +3,7 @@ import { User } from 'firebase/auth';
 import {
   AlertTriangle,
   BarChart3,
+  BookMarked,
   BookOpen,
   CheckCircle2,
   Download,
@@ -47,6 +48,7 @@ import { SummaryWorkspace } from './components/SummaryWorkspace';
 import { AiAccountantWorkspace } from './components/AiAccountantWorkspace';
 import { SheetsSyncWorkspace } from './components/SheetsSyncWorkspace';
 import { SettingsWorkspace } from './components/SettingsWorkspace';
+import { InstallGuideWorkspace } from './components/InstallGuideWorkspace';
 import { BackupReminderModal } from './components/BackupReminderModal';
 
 type AppSection =
@@ -56,7 +58,8 @@ type AppSection =
   | 'summary'
   | 'ai'
   | 'sheets'
-  | 'settings';
+  | 'settings'
+  | 'guide';
 
 const STORAGE_SETTINGS_KEY = 'pcu_ledger_settings_v1';
 const STORAGE_TXS_KEY = 'pcu_ledger_transactions_v1';
@@ -444,6 +447,7 @@ export default function App() {
     { id: 'ai', label: 'AI ผู้เชี่ยวชาญบัญชี', icon: Sparkles },
     { id: 'sheets', label: 'Google Sheets', icon: FileSpreadsheet },
     { id: 'settings', label: 'ตั้งค่าเริ่มต้น', icon: Settings },
+    { id: 'guide', label: 'คู่มือติดตั้ง & ใช้งาน', icon: BookMarked },
   ];
 
   const sectionTitles: Record<AppSection, string> = {
@@ -454,6 +458,7 @@ export default function App() {
     ai: 'ผู้เชี่ยวชาญ AI ด้านบัญชี รพ.สต.',
     sheets: 'เชื่อมต่อและซิงก์ Google Sheets',
     settings: 'ตั้งค่าเริ่มต้นหน่วยงาน โครงการ / 402 / 404 และสำรองข้อมูล',
+    guide: 'คู่มือการติดตั้งและนำไปใช้กับสถานบริการอื่น',
   };
 
   return (
@@ -837,6 +842,12 @@ export default function App() {
               transactions={transactions}
               selectedMonthKey={selectedMonthKey}
               onChangeMonth={setSelectedMonthKey}
+              onUpdateQuarterlyBudgets={(nextBudgets) =>
+                handleSaveGeneralSettings({
+                  ...settings,
+                  quarterlyBudgets: nextBudgets,
+                })
+              }
               onNavigate={setActiveSection}
             />
           )}
@@ -912,6 +923,7 @@ export default function App() {
             <SettingsWorkspace
               settings={settings}
               transactions={transactions}
+              selectedMonthKey={selectedMonthKey}
               hasUnsavedChanges={hasUnsavedChanges}
               onSaveSettings={handleSaveGeneralSettings}
               onResetDemoData={handleResetDemoData}
@@ -922,6 +934,15 @@ export default function App() {
                 setBackupReminderOpen(true);
               }}
               onUpdateBackupSync={handleUpdateBackupSync}
+            />
+          )}
+
+          {activeSection === 'guide' && (
+            <InstallGuideWorkspace
+              settings={settings}
+              transactions={transactions}
+              hasGoogleConnected={Boolean(accessToken)}
+              onNavigate={setActiveSection}
             />
           )}
         </main>
