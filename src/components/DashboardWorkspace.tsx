@@ -39,6 +39,7 @@ import {
   ProjectScopeFilter,
 } from '../utils/accountingMath';
 import { QuarterlyBudgetChart } from './QuarterlyBudgetChart';
+import { ExpenseBreakdownPieChart } from './ExpenseBreakdownPieChart';
 
 interface DashboardWorkspaceProps {
   settings: PcuSettings;
@@ -744,6 +745,15 @@ export const DashboardWorkspace: React.FC<DashboardWorkspaceProps> = ({
           })}
         </div>
       </section>
+
+      {/* Deep-Dive Expense Category Pie Chart Dashboard */}
+      <ExpenseBreakdownPieChart
+        settings={settings}
+        filteredTransactions={filteredTxs}
+        selectedMonthKey={selectedMonthKey}
+        onSelectMonth={onChangeMonth}
+        onNavigate={onNavigate}
+      />
 
       {/* Quarterly Cumulative Income & Expense vs Budget Target BarChart */}
       <QuarterlyBudgetChart
